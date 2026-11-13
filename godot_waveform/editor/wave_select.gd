@@ -1,7 +1,8 @@
 extends Control
 
 signal region_selected(from_ratio: float, to_ratio: float)
-signal waveform_clicked(ratio: float)
+signal note_selected(id: String)
+signal note_delete_requested(id: String)
 
 var waveform: WaveformView
 var notes: Array[Dictionary] = []
@@ -12,8 +13,13 @@ var visible_layers: Dictionary = {}
 var layer_colors: Dictionary = {}
 var layer_opacities: Dictionary = {}
 var selecting := false
+var left_dragging := false
+var left_moved := false
 var start_x := 0.0
 var end_x := 0.0
+var left_start_x := 0.0
+var start_view := 0.0
+var hit_note_id := ""
 
 
 func _ready() -> void:
@@ -23,12 +29,33 @@ func _ready() -> void:
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
-				selecting = true
-				start_x = event.position.x
-				end_x = start_x
-				queue_redraw()
+				left_dragging = true
+				left_moved = false
+				left_start_x = event.position.x
+				start_view = waveform.view_start
+				hit_note_id = _note_at_x(event.position.x)
+				accept_event()
+			else:
+				if left_dragging and not left_moved:
+					if not hit_note_id.is_empty():
+						note_selected.emit(hit_note_id)
+					else:
+						var ratio := _ratio(event.position.x)
+						waveform.seek_requested.emit(ratio)
+				left_dragging = false
+				accept_event()
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			if event.pressed:
+				var hit := _note_at_x(event.position.x)
+				if not hit.is_empty():
+					note_delete_requested.emit(hit)
+				else:
+					selecting = true
+					start_x = event.position.x
+					end_x = start_x
+					queue_redraw()
 			else:
 				if selecting:
 					var a := _ratio(start_x)
@@ -36,10 +63,6 @@ func _gui_input(event: InputEvent) -> void:
 					region_selected.emit(minf(a, b), maxf(a, b))
 				selecting = false
 				queue_redraw()
-			accept_event()
-		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not selecting:
-			waveform_clicked.emit(_ratio(event.position.x))
-			waveform.seek_requested.emit(_ratio(event.position.x))
 			accept_event()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			waveform.zoom_at(waveform.zoom_step, event.position.x / maxf(size.x, 1.0))
@@ -51,6 +74,35 @@ func _gui_input(event: InputEvent) -> void:
 		if selecting:
 			end_x = event.position.x
 			queue_redraw()
+		if left_dragging and absf(event.position.x - left_start_x) > 4.0:
+			left_moved = true
+			var span := 1.0 / maxf(waveform.zoom, 1.0)
+			waveform.view_start = clampf(
+				start_view - (event.position.x - left_start_x) / maxf(size.x, 1.0) * span,
+				0.0,
+				1.0 - span
+			)
+			queue_redraw()
+			accept_event()
+
+
+func _note_at_x(x: float) -> String:
+	if duration <= 0.0:
+		return ""
+	var span := 1.0 / maxf(waveform.zoom, 1.0)
+	var best_distance := 12.0
+	var best_id := ""
+	for note in notes:
+		var layer_name := str(note.get("layer", "Layer 1"))
+		if not bool(visible_layers.get(layer_name, true)):
+			continue
+		var ratio := float(note.get("time", 0.0)) / duration
+		var note_x := (ratio - waveform.view_start) / span * size.x
+		var distance := absf(note_x - x)
+		if distance < best_distance:
+			best_distance = distance
+			best_id = str(note.get("id", ""))
+	return best_id
 
 
 func _ratio(x: float) -> float:
