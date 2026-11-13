@@ -1,0 +1,8 @@
+# Godot 4+ cache / import cache
+.godot/
+
+# PNGs written by the demo's "Export PNG" button
+/exports/*.png
+
+# python helper caches
+__pycache__/
