@@ -17,6 +17,8 @@ var selected_shape_id := ""
 var dragging_shape_id := ""
 var dragging_shape_point := -1
 var interactive := true
+var line_preview_duration := 1.0
+var active_layer_opacity := 0.9
 var selected_id := ""
 var selected_ids: Array[String] = []
 var cursor_position := Vector2(-1.0, -1.0)
@@ -350,19 +352,27 @@ func _draw() -> void:
 				draw_circle(handle, 7.0, Color("#f5cf67"))
 				draw_circle(handle, 3.0, Color("#17191e"))
 	if line_start.x >= 0.0 and line_preview_position.x >= 0.0:
+		var snapped_start := _snap_preview_point(line_start)
+		var snapped_end := _snap_preview_point(line_preview_position)
 		for preview_index in range(9):
 			var amount := float(preview_index) / 8.0
-			var preview_point := _snap_preview_point(line_start.lerp(line_preview_position, amount))
+			var preview_point := snapped_start.lerp(snapped_end, amount)
+			var arrival := amount * line_preview_duration
+			var opacity := 1.0
+			if animate_notes:
+				opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
+			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
+			var radius := (25.0 if not is_3d_preview else 22.0) * growth
 			var preview_center := _project(preview_point)
-			var radius := 25.0 if not is_3d_preview else 22.0
 			var rect := Rect2(
 				preview_center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0)
 			)
 			var preview_color := active_layer_color
-			preview_color.a = 0.24
+			preview_color.a = opacity * active_layer_opacity * 0.28
 			draw_rect(rect, preview_color, true)
-			preview_color.a = 0.5
-			draw_rect(rect, preview_color, false, 1.5)
+			draw_rect(rect.grow(3.0), Color("#f5cf67", 0.8), false, 1.5)
+		draw_circle(_project(snapped_start), 7.0, Color("#f5cf67"))
+		draw_circle(_project(snapped_end), 7.0, Color("#f5cf67"))
 	if ghost_position.x >= 0.0:
 		var ghost := ghost_position
 		if snap_enabled and not Input.is_key_pressed(KEY_SHIFT):

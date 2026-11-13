@@ -79,7 +79,7 @@ func _gui_input(event: InputEvent) -> void:
 						note_selected.emit(hit_note_id)
 					else:
 						var ratio := _ratio(event.position.x)
-						waveform.seek_requested.emit(ratio)
+						waveform.seek_requested.emit(_snap_ratio_to_division(ratio))
 				left_dragging = false
 				accept_event()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
@@ -120,7 +120,7 @@ func _gui_input(event: InputEvent) -> void:
 			)
 			if duration > 0.0:
 				var tempo_points := _sorted_bpm_points()
-				var target_beats := (
+				var target_beats: float = (
 					round(_beat_count_at_time(raw_start * duration, tempo_points) / 4.0) * 4.0
 				)
 				raw_start = _time_at_beat(target_beats, tempo_points) / duration
@@ -159,6 +159,16 @@ func _ratio(x: float) -> float:
 		return 0.0
 	var span := 1.0 / maxf(waveform.zoom, 1.0)
 	return clampf(waveform.view_start + clampf(x / maxf(size.x, 1.0), 0.0, 1.0) * span, 0.0, 1.0)
+
+
+func _snap_ratio_to_division(ratio: float) -> float:
+	if duration <= 0.0:
+		return clampf(ratio, 0.0, 1.0)
+	var points := _sorted_bpm_points()
+	var step_beats := 4.0 / float(maxi(divisions_per_bar, 1))
+	var target_beats: float = _beat_count_at_time(ratio * duration, points)
+	var snapped_beats := round(target_beats / step_beats) * step_beats
+	return clampf(_time_at_beat(snapped_beats, points) / duration, 0.0, 1.0)
 
 
 func _sorted_bpm_points() -> Array[Vector2]:
