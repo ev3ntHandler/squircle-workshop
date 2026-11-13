@@ -779,6 +779,7 @@ func _build_notes_page() -> Control:
 	page.add_theme_constant_override("separation", 10)
 	var left := _panel()
 	left.custom_minimum_size.x = 250
+	left.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var leftcol := VBoxContainer.new()
 	left.add_child(leftcol)
@@ -826,7 +827,9 @@ func _build_notes_page() -> Control:
 	properties_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	props_scroll.add_child(properties_panel)
 	leftcol.add_child(props)
-	page.add_child(_pad(left, 6, 6, 6, 6))
+	var left_margin := _pad(left, 6, 6, 6, 6)
+	left_margin.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	page.add_child(left_margin)
 
 	var center := VBoxContainer.new()
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -849,6 +852,7 @@ func _build_notes_page() -> Control:
 	center.add_child(toolrow)
 
 	var workarea := HBoxContainer.new()
+	workarea.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	workarea.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	workarea.add_theme_constant_override("separation", 10)
 	center.add_child(workarea)
@@ -856,7 +860,7 @@ func _build_notes_page() -> Control:
 	gridwrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	gridwrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var gridbox := VBoxContainer.new()
-	gridbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	gridbox.alignment = BoxContainer.ALIGNMENT_BEGIN
 	gridbox.add_theme_constant_override("separation", 8)
 	gridwrap.add_child(gridbox)
 	var gridtitle := HBoxContainer.new()
@@ -887,6 +891,7 @@ func _build_notes_page() -> Control:
 
 	var options := _panel()
 	options.custom_minimum_size.x = 250
+	options.size_flags_horizontal = Control.SIZE_SHRINK_END
 	options.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var options_col := VBoxContainer.new()
 	options.add_child(options_col)
@@ -1087,10 +1092,12 @@ func _build_notes_page() -> Control:
 	options_pages["Edit"] = edit_page
 	_show_options_page("Snapping")
 	_set_tool(current_tool)
-	workarea.add_child(_pad(options, 10, 10, 10, 10))
+	var options_margin := _pad(options, 8, 8, 8, 8)
+	options_margin.size_flags_horizontal = Control.SIZE_SHRINK_END
+	workarea.add_child(options_margin)
 
 	var bottom := HBoxContainer.new()
-	bottom.custom_minimum_size.y = 82
+	bottom.custom_minimum_size.y = 64
 	bottom.add_theme_constant_override("separation", 10)
 	center.add_child(bottom)
 	var layerpanel := _panel()
@@ -1124,7 +1131,7 @@ func _build_notes_page() -> Control:
 	_refresh_object_list()
 	_refresh_layers()
 	_show_properties()
-	return _pad(page, 8, 8, 8, 8)
+	return _pad(page, 6, 6, 6, 6)
 
 
 func _build_preview_page() -> Control:
@@ -1134,15 +1141,15 @@ func _build_preview_page() -> Control:
 	main.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	main.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var col := VBoxContainer.new()
-	col.alignment = BoxContainer.ALIGNMENT_CENTER
-	col.add_theme_constant_override("separation", 18)
+	col.alignment = BoxContainer.ALIGNMENT_BEGIN
+	col.add_theme_constant_override("separation", 8)
 	main.add_child(col)
 	col.add_child(_label("GAME PREVIEW", 11, MUTED, true))
 	var playfield := GRID_SCRIPT.new()
 	preview_grid = playfield
 	playfield.is_3d_preview = true
 	playfield.interactive = false
-	playfield.custom_minimum_size = Vector2(460, 460)
+	playfield.custom_minimum_size = Vector2(340, 340)
 	playfield.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	playfield.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	playfield.notes = note_list
@@ -1157,9 +1164,12 @@ func _build_preview_page() -> Control:
 			"Autoplay cursor continues until you take control · ESC returns to autoplay", 11, MUTED
 		)
 	)
-	page.add_child(_pad(main, 20, 20, 16, 16))
+	var preview_main_margin := _pad(main, 10, 10, 8, 8)
+	preview_main_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page.add_child(preview_main_margin)
 	var side := _panel()
 	side.custom_minimum_size.x = 250
+	side.size_flags_horizontal = Control.SIZE_SHRINK_END
 	var sidecol := VBoxContainer.new()
 	side.add_child(sidecol)
 	sidecol.add_child(_section_title("Playtest", "RHYTHIA SIMULATION"))
@@ -1197,8 +1207,10 @@ func _build_preview_page() -> Control:
 	preview_rate_row.add_child(preview_rate_value)
 	sidecol.add_child(preview_rate_row)
 	sidecol.add_child(_button("Restart preview", PANEL_ALT))
-	page.add_child(_pad(side, 16, 16, 14, 14))
-	return _pad(page, 10, 10, 10, 10)
+	var side_margin := _pad(side, 10, 10, 8, 8)
+	side_margin.size_flags_horizontal = Control.SIZE_SHRINK_END
+	page.add_child(side_margin)
+	return _pad(page, 6, 6, 6, 6)
 
 
 func _build_export_page() -> Control:
@@ -1229,9 +1241,12 @@ func _build_export_page() -> Control:
 	var export_button := _button("Export beatmap", ACCENT)
 	export_button.pressed.connect(_show_export_notice)
 	col.add_child(export_button)
-	page.add_child(_pad(main, 24, 24, 20, 20))
+	var export_main_margin := _pad(main, 12, 12, 10, 10)
+	export_main_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page.add_child(export_main_margin)
 	var issues := _panel()
-	issues.custom_minimum_size.x = 400
+	issues.custom_minimum_size.x = 320
+	issues.size_flags_horizontal = Control.SIZE_SHRINK_END
 	var issuecol := VBoxContainer.new()
 	issues.add_child(issuecol)
 	issuecol.add_child(_section_title("Verifier", "NOTIFICATIONS"))
@@ -1244,8 +1259,10 @@ func _build_export_page() -> Control:
 	var verify_button := _button("Run verifier", PANEL_ALT)
 	verify_button.pressed.connect(_show_export_notice)
 	issuecol.add_child(verify_button)
-	page.add_child(_pad(issues, 16, 16, 14, 14))
-	return _pad(page, 10, 10, 10, 10)
+	var issues_margin := _pad(issues, 10, 10, 8, 8)
+	issues_margin.size_flags_horizontal = Control.SIZE_SHRINK_END
+	page.add_child(issues_margin)
+	return _pad(page, 6, 6, 6, 6)
 
 
 func _show_export_notice() -> void:
