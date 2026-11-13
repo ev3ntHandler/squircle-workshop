@@ -167,7 +167,7 @@ func _snap_ratio_to_division(ratio: float) -> float:
 	var points := _sorted_bpm_points()
 	var step_beats := 4.0 / float(maxi(divisions_per_bar, 1))
 	var target_beats: float = _beat_count_at_time(ratio * duration, points)
-	var snapped_beats := round(target_beats / step_beats) * step_beats
+	var snapped_beats: float = round(target_beats / step_beats) * step_beats
 	return clampf(_time_at_beat(snapped_beats, points) / duration, 0.0, 1.0)
 
 

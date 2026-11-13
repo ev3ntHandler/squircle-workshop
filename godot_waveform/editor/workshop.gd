@@ -52,7 +52,6 @@ var auto_advance_badge: Control
 var speed_value_label: Label
 var tree_context_menu: PopupMenu
 var tree_context_item_id := ""
-var tab_transition: Tween
 var audio_loaded := false
 var cue_player: AudioStreamPlayer
 var cue_timer_remaining := 0.0
@@ -70,7 +69,7 @@ var bpm_graph
 var wave_overlay
 var mini_overlay
 var scrub_slider: HSlider
-var tab_body: Control
+var tab_body: VBoxContainer
 var notes_tab: Control
 var metadata_tab: Control
 var preview_tab: Control
@@ -458,10 +457,9 @@ func _build_shell() -> void:
 	outer.add_child(_build_topbar())
 	outer.add_child(_build_waveform_strip())
 	outer.add_child(_build_tabs())
-	tab_body = Control.new()
-	tab_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tab_body = VBoxContainer.new()
 	tab_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	tab_body.clip_contents = true
+	tab_body.add_theme_constant_override("separation", 0)
 	outer.add_child(tab_body)
 	outer.add_child(_build_transport())
 	_build_tab_pages()
@@ -647,8 +645,7 @@ func _build_tab_pages() -> void:
 	preview_tab = _build_preview_page()
 	export_tab = _build_export_page()
 	for page in [metadata_tab, notes_tab, preview_tab, export_tab]:
-		page.clip_contents = true
-		page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		page.visible = false
 		tab_body.add_child(page)
 
@@ -656,48 +653,12 @@ func _build_tab_pages() -> void:
 func _show_tab(tab: String) -> void:
 	if tab != "Metadata" and not audio_loaded:
 		return
+	active_tab = tab
 	var pages := {
 		"Metadata": metadata_tab, "Notes": notes_tab, "Preview": preview_tab, "Export": export_tab
 	}
-	if not pages.has(tab):
-		return
-	var old_tab := active_tab
-	var next_page: Control = pages[tab]
-	var old_page: Control = pages.get(old_tab)
-	if tab_transition != null and tab_transition.is_running():
-		tab_transition.kill()
 	for child in tab_body.get_children():
-		child.position = Vector2.ZERO
-		child.visible = child == old_page
-	if tab == old_tab or old_page == null or not audio_loaded:
-		for child in tab_body.get_children():
-			child.visible = child == next_page
-	else:
-		var tab_order := ["Metadata", "Notes", "Preview", "Export"]
-		var direction := 1.0 if tab_order.find(tab) > tab_order.find(old_tab) else -1.0
-		var width := maxf(tab_body.size.x, 1.0)
-		next_page.visible = true
-		next_page.position = Vector2(-width * direction, 0.0)
-		tab_transition = create_tween().set_parallel(true)
-		(
-			tab_transition
-			. tween_property(old_page, "position:x", width * direction, 0.22)
-			. set_trans(Tween.TRANS_CUBIC)
-			. set_ease(Tween.EASE_IN_OUT)
-		)
-		(
-			tab_transition
-			. tween_property(next_page, "position:x", 0.0, 0.22)
-			. set_trans(Tween.TRANS_CUBIC)
-			. set_ease(Tween.EASE_IN_OUT)
-		)
-		tab_transition.finished.connect(
-			func():
-				for child in tab_body.get_children():
-					child.visible = child == next_page
-					child.position = Vector2.ZERO
-		)
-	active_tab = tab
+		child.visible = child == pages.get(tab)
 	for key in tab_buttons:
 		var button: Button = tab_buttons[key]
 		button.disabled = key != "Metadata" and not audio_loaded
@@ -876,7 +837,7 @@ func _build_notes_page() -> Control:
 	grid = GRID_SCRIPT.new()
 	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	grid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	grid.custom_minimum_size = Vector2(320, 320)
+	grid.custom_minimum_size = Vector2(260, 260)
 	grid.grid_clicked.connect(_on_grid_clicked)
 	grid.grid_dragged.connect(_on_grid_dragged)
 	grid.grid_hovered.connect(_on_grid_hovered)
@@ -893,7 +854,7 @@ func _build_notes_page() -> Control:
 	workarea.add_child(gridwrap)
 
 	var options := _panel()
-	options.custom_minimum_size.x = 264
+	options.custom_minimum_size.x = 280
 	options.size_flags_horizontal = Control.SIZE_FILL
 	options.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var options_col := VBoxContainer.new()
@@ -1098,7 +1059,7 @@ func _build_notes_page() -> Control:
 	workarea.add_child(options)
 
 	var bottom := HBoxContainer.new()
-	bottom.custom_minimum_size.y = 64
+	bottom.custom_minimum_size.y = 54
 	bottom.add_theme_constant_override("separation", 10)
 	center.add_child(bottom)
 	var layerpanel := _panel()
@@ -1122,7 +1083,7 @@ func _build_notes_page() -> Control:
 	layerhead.add_child(merge_layer_button)
 	layercol.add_child(layerhead)
 	var layer_scroll := ScrollContainer.new()
-	layer_scroll.custom_minimum_size.y = 74
+	layer_scroll.custom_minimum_size.y = 42
 	layer_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	layercol.add_child(layer_scroll)
 	layer_list = VBoxContainer.new()
@@ -1167,7 +1128,7 @@ func _build_preview_page() -> Control:
 	)
 	page.add_child(main)
 	var side := _panel()
-	side.custom_minimum_size.x = 270
+	side.custom_minimum_size.x = 290
 	side.size_flags_horizontal = Control.SIZE_FILL
 	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var sidecol := VBoxContainer.new()
@@ -1241,7 +1202,7 @@ func _build_export_page() -> Control:
 	col.add_child(export_button)
 	page.add_child(main)
 	var issues := _panel()
-	issues.custom_minimum_size.x = 340
+	issues.custom_minimum_size.x = 360
 	issues.size_flags_horizontal = Control.SIZE_FILL
 	issues.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var issuecol := VBoxContainer.new()
