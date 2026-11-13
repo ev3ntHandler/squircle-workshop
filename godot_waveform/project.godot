@@ -10,17 +10,17 @@ config_version=5
 
 [application]
 
-config/name="Waveform Studio"
-config/description="Waveform images from .wav / .ogg / .mp3 files, rendered at runtime or baked offline."
+config/name="Squircle Workshop"
+config/description="A hover-to-hit Rhythia beatmap editor with an interactive waveform timeline."
 config/version="1.0"
-run/main_scene="res://demo/demo.tscn"
-config/features=PackedStringArray("4.5", "GL Compatibility")
+run/main_scene="res://editor/workshop.tscn"
+config/features=PackedStringArray("4.8", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [display]
 
-window/size/viewport_width=1280
-window/size/viewport_height=720
+window/size/viewport_width=1600
+window/size/viewport_height=900
 window/stretch/mode="canvas_items"
 
 [rendering]

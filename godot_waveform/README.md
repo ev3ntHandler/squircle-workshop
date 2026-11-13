@@ -1,4 +1,12 @@
-# Waveform Studio — audio waveforms from `.wav` / `.ogg` / `.mp3` in Godot 4
+# Squircle Workshop — Rhythia beatmap editor + waveform toolkit
+
+Squircle Workshop is a Godot 4.8 GDScript beatmap-editor prototype for Rhythia, a hover-to-hit rhythm game. Open `project.godot` and run the project to launch the editor. It opens on Metadata with Notes, Preview, and Export disabled until you import `.wav`, `.ogg`, or `.mp3` audio from the top waveform toolbar.
+
+The editor includes Metadata, Notes, Preview, and Export workspaces; Notes, Preview, and Export stay disabled until audio is imported. In Notes, click the 3×3 playfield or press **Q W E / A S D / Z X C** to place notes at the playhead; use **Shift** to bypass position snapping. During playback, notes in both Notes and Preview fade in toward their hit time. Auto-advance gives a short reverberant audio cue. The waveform can be zoomed and bar-snapped while panning, with selectable beat divisions; its minimap remains fit to the whole track and click-drags to seek without annotations or zooming. Notes are created only on the playfield. Ctrl-click notes in Select mode to toggle multi-selection, right-click a note to delete, and right-drag empty waveform space to select a time range. The BPM graph is zoom-aware; click to add points (whole-BPM snapping, Shift for 0.01 BPM), drag to adjust, or right-click for focused numeric entry. Space toggles playback and the arrow keys navigate notes. Ctrl+Z / Ctrl+Y undo and redo, Ctrl+A selects notes in the current layer, and Delete removes selected notes. Use the marker-only Tree/Library browser, layers, and the inspector to organize and edit notes. Line is drawn by dragging from one endpoint to another; Path and Curve gestures bake to simple note objects. Export is deliberately marked WIP and currently shows verifier warnings rather than writing a Rhythia file.
+
+The waveform is rendered by the included reusable toolkit below. Its cache, zoom/pan and decode implementation remain available for standalone projects.
+
+## Waveform toolkit
 
 Turn any audio file into a **waveform image** (`Image`, `ImageTexture` or a PNG on disk) and draw it
 in a UI — with a playhead, click-to-seek, stereo split, **horizontal zoom** and full styling control.
