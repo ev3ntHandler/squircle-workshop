@@ -40,6 +40,12 @@ var duration := 0.0
 var bpm := 128.0
 var song_time := 0.0
 var playback_speed := 1.0
+var approach_rate_value := 1.0
+var cursor_smoothness_value := 0.45
+var tab_buttons: Dictionary = {}
+var tool_buttons: Dictionary = {}
+var waveform_panel: Control
+var auto_advance_badge: Control
 var playing := false
 var auto_advance := false
 var autoplay_cursor := true
@@ -95,7 +101,12 @@ func _ready() -> void:
 	set_process(true)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if minimap != null:
+		minimap.zoom = 1.0
+		minimap.view_start = 0.0
+	if waveform_panel != null:
+		waveform_panel.custom_minimum_size.x = maxf(get_viewport_rect().size.x * 0.75 - 36.0, 320.0)
 	if player != null and player.playing:
 		song_time = (
 			player.get_playback_position()
@@ -115,6 +126,7 @@ func _process(_delta: float) -> void:
 		wave_overlay.notes = note_list
 		wave_overlay.markers = markers
 		wave_overlay.duration = maxf(duration, 0.01)
+		wave_overlay.bar_seconds = _bar_seconds()
 		wave_overlay.selected_ids = selected_ids
 		wave_overlay.visible_layers = grid.visible_layers
 		wave_overlay.layer_colors = grid.layer_colors
@@ -129,39 +141,109 @@ func _process(_delta: float) -> void:
 		mini_overlay.layer_opacities = grid.layer_opacities
 		mini_overlay.queue_redraw()
 	if grid != null:
-		grid.cursor_position = (
+		grid.current_time = song_time
+		grid.approach_rate = approach_rate_value
+		var target_cursor := (
 			_cursor_for_time(song_time) if playing and autoplay_cursor else Vector2(-1, -1)
 		)
+		if target_cursor.x < 0.0:
+			grid.cursor_position = target_cursor
+		elif grid.cursor_position.x < 0.0 or cursor_smoothness_value <= 0.0:
+			grid.cursor_position = target_cursor
+		else:
+			var blend := clampf(delta * lerpf(30.0, 4.0, cursor_smoothness_value), 0.0, 1.0)
+			grid.cursor_position = grid.cursor_position.lerp(target_cursor, blend)
 		grid.refresh()
 	if preview_grid != null:
+		preview_grid.current_time = song_time
+		preview_grid.approach_rate = approach_rate_value
 		preview_grid.cursor_position = grid.cursor_position
 		preview_grid.refresh()
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var focused_control := get_viewport().gui_get_focus_owner()
+		if (
+			focused_control is LineEdit
+			and not focused_control.get_global_rect().has_point(event.global_position)
+		):
+			focused_control.release_focus()
+		return
 	if not event is InputEventKey:
 		return
 	var key := event as InputEventKey
 	if not key.pressed or key.echo:
 		return
-	var modifier := key.ctrl_pressed or key.meta_pressed
 	var focused := get_viewport().gui_get_focus_owner()
 	var text_editing := focused is LineEdit or focused is TextEdit or focused is SpinBox
-	if modifier and key.keycode == KEY_Z and not text_editing:
+	if text_editing:
+		return
+	var modifier := key.ctrl_pressed or key.meta_pressed
+	if key.keycode == KEY_SPACE:
+		_toggle_play()
+		get_viewport().set_input_as_handled()
+	elif key.keycode == KEY_LEFT:
+		_navigate_note(-1)
+		get_viewport().set_input_as_handled()
+	elif key.keycode == KEY_RIGHT:
+		_navigate_note(1)
+		get_viewport().set_input_as_handled()
+	elif (
+		not modifier
+		and key.keycode in [KEY_Q, KEY_W, KEY_E, KEY_A, KEY_S, KEY_D, KEY_Z, KEY_X, KEY_C]
+	):
+		var cell := [KEY_Q, KEY_W, KEY_E, KEY_A, KEY_S, KEY_D, KEY_Z, KEY_X, KEY_C].find(
+			key.keycode
+		)
+		_place_keyboard_note(cell)
+		get_viewport().set_input_as_handled()
+	elif modifier and key.keycode == KEY_Z:
 		if key.shift_pressed:
 			_redo()
 		else:
 			_undo()
 		get_viewport().set_input_as_handled()
-	elif modifier and key.keycode == KEY_Y and not text_editing:
+	elif modifier and key.keycode == KEY_Y:
 		_redo()
 		get_viewport().set_input_as_handled()
-	elif modifier and key.keycode == KEY_A and not text_editing:
+	elif modifier and key.keycode == KEY_A:
 		_select_all_in_layer()
 		get_viewport().set_input_as_handled()
-	elif key.keycode == KEY_DELETE and not text_editing:
+	elif key.keycode == KEY_DELETE:
 		_delete_selected()
 		get_viewport().set_input_as_handled()
+
+
+func _place_keyboard_note(cell: int) -> void:
+	if grid == null or current_tool in ["Select", "Marker"]:
+		return
+	var position := Vector2((cell % 3 + 0.5) / 3.0, (floori(float(cell) / 3.0) + 0.5) / 3.0)
+	_append_note(position, song_time, "Pencil")
+	last_placed_position = position
+	_sync_grid()
+
+
+func _navigate_note(direction: int) -> void:
+	if note_list.is_empty():
+		return
+	var ordered := note_list.duplicate()
+	ordered.sort_custom(func(a: Dictionary, b: Dictionary): return float(a.time) < float(b.time))
+	var target: Dictionary = ordered[0] if direction > 0 else ordered[-1]
+	if direction > 0:
+		for note in ordered:
+			if float(note.time) > song_time + 0.001:
+				target = note
+				break
+	else:
+		for i in range(ordered.size() - 1, -1, -1):
+			if float(ordered[i].time) < song_time - 0.001:
+				target = ordered[i]
+				break
+	selected_id = str(target.id)
+	selected_ids = [selected_id]
+	_seek_ratio(float(target.time) / maxf(duration, 0.01))
+	_sync_grid()
 
 
 func _record_history() -> void:
@@ -303,7 +385,7 @@ func _build_shell() -> void:
 	outer.add_child(tab_body)
 	outer.add_child(_build_transport())
 	_build_tab_pages()
-	_show_tab("Notes")
+	_show_tab("Metadata")
 	_build_file_dialog()
 	_build_cover_dialog()
 	_build_notification()
@@ -331,8 +413,17 @@ func _build_topbar() -> Control:
 
 
 func _build_waveform_strip() -> Control:
+	var centered := HBoxContainer.new()
+	var left_space := Control.new()
+	left_space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	centered.add_child(left_space)
 	var wrap := _panel()
+	waveform_panel = wrap
 	wrap.custom_minimum_size.y = 165
+	centered.add_child(wrap)
+	var right_space := Control.new()
+	right_space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	centered.add_child(right_space)
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 4)
 	wrap.add_child(column)
@@ -363,6 +454,7 @@ func _build_waveform_strip() -> Control:
 	column.add_child(waveform)
 	wave_overlay = SELECT_SCRIPT.new()
 	wave_overlay.waveform = waveform
+	wave_overlay.bar_seconds = _bar_seconds()
 	wave_overlay.region_selected.connect(_on_wave_region_selected)
 	wave_overlay.note_selected.connect(_select_note_by_id)
 	wave_overlay.note_delete_requested.connect(_delete_note_by_id)
@@ -388,13 +480,10 @@ func _build_waveform_strip() -> Control:
 	minimap.follow_playhead = false
 	mini_overlay = SELECT_SCRIPT.new()
 	mini_overlay.waveform = minimap
-	mini_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mini_overlay.fit_only = true
 	minimap.add_child(mini_overlay)
-	minimap.seek_requested.connect(
-		func(ratio):
-			_seek_ratio(ratio)
-			waveform.view_start = clampf(ratio - 0.15, 0.0, 0.8)
-	)
+	minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	minimap.seek_requested.connect(_seek_ratio)
 	minirow.add_child(minimap)
 	var speed := _label("Speed", 10, MUTED)
 	minirow.add_child(speed)
@@ -407,27 +496,28 @@ func _build_waveform_strip() -> Control:
 	speed_slider.value_changed.connect(_on_speed_changed)
 	minirow.add_child(speed_slider)
 	column.add_child(minirow)
-	var marker_row := HBoxContainer.new()
-	marker_row.add_child(_label("MARKERS", 9, MUTED, true))
-	for m in markers:
-		marker_row.add_child(_badge(str(m.get("name", "Marker")), Color("#e6c45e")))
-	column.add_child(marker_row)
-	return _pad(wrap, 12, 12, 8, 8)
+	return _pad(centered, 0, 0, 8, 8)
 
 
 func _build_tabs() -> Control:
 	var row := HBoxContainer.new()
 	row.custom_minimum_size.y = 46
 	row.add_theme_constant_override("separation", 4)
-	for tab in ["Metadata", "Notes", "Preview", "Export"]:
-		var button := _button(tab, PANEL)
-		button.custom_minimum_size = Vector2(140, 36)
-		button.pressed.connect(_show_tab.bind(tab))
-		row.add_child(button)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
-	row.add_child(_label("3×3 · Hover-to-hit", 11, CYAN))
+	for tab in ["Metadata", "Notes", "Preview", "Export"]:
+		var button := _button(tab, INK)
+		button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+		button.add_theme_stylebox_override("hover", StyleBoxEmpty.new())
+		button.add_theme_stylebox_override("pressed", StyleBoxEmpty.new())
+		button.custom_minimum_size = Vector2(120, 36)
+		button.pressed.connect(_show_tab.bind(tab))
+		tab_buttons[tab] = button
+		row.add_child(button)
+	var end_spacer := Control.new()
+	end_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(end_spacer)
 	return _pad(row, 18, 18, 3, 5)
 
 
@@ -462,7 +552,11 @@ func _build_transport() -> Control:
 	var notes := _label("0 notes", 11, MUTED)
 	bar.add_child(notes)
 	notes_count_label = notes
-	bar.add_child(_badge("AUTO-ADVANCE OFF", Color("#9199a8")))
+	var right_space := Control.new()
+	right_space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.add_child(right_space)
+	auto_advance_badge = _badge("AUTO-ADVANCE OFF", Color("#9199a8"))
+	bar.add_child(auto_advance_badge)
 	return _pad(bar, 18, 18, 8, 8)
 
 
@@ -483,7 +577,10 @@ func _show_tab(tab: String) -> void:
 	}
 	for child in tab_body.get_children():
 		child.visible = child == pages.get(tab)
-	_toast("%s workspace" % tab)
+	for key in tab_buttons:
+		var button: Button = tab_buttons[key]
+		button.disabled = key != "Metadata" and file_path.is_empty()
+		button.modulate = Color.WHITE if key == tab else Color(0.58, 0.62, 0.7, 1.0)
 
 
 func _build_metadata_page() -> Control:
@@ -574,9 +671,6 @@ func _build_notes_page() -> Control:
 	var leftspace := Control.new()
 	leftspace.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	lefthead.add_child(leftspace)
-	var add_marker := _button("＋ Marker", PANEL_ALT)
-	add_marker.pressed.connect(func(): _add_marker_at_time(song_time))
-	lefthead.add_child(add_marker)
 	leftcol.add_child(lefthead)
 	var browser_tabs := HBoxContainer.new()
 	for kind in ["Tree", "Library"]:
@@ -588,12 +682,18 @@ func _build_notes_page() -> Control:
 	search_input = _line_edit("Search markers…")
 	search_input.text_changed.connect(func(_text): _refresh_object_list())
 	leftcol.add_child(search_input)
+	var tree_scroll := ScrollContainer.new()
+	tree_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	leftcol.add_child(tree_scroll)
 	tree_list = VBoxContainer.new()
-	tree_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	leftcol.add_child(tree_list)
+	tree_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tree_scroll.add_child(tree_list)
+	var library_scroll := ScrollContainer.new()
+	library_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	leftcol.add_child(library_scroll)
 	library_list = VBoxContainer.new()
-	library_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	leftcol.add_child(library_list)
+	library_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	library_scroll.add_child(library_list)
 	page.add_child(_pad(left, 8, 8, 8, 8))
 
 	var center := VBoxContainer.new()
@@ -605,6 +705,7 @@ func _build_notes_page() -> Control:
 	toolrow.add_child(_label("TOOLS", 10, MUTED, true))
 	for tool in ["Select", "Pencil", "Brush", "Line", "Path", "Curve", "Marker"]:
 		var button := _button(tool, PANEL_ALT)
+		tool_buttons[tool] = button
 		button.pressed.connect(_set_tool.bind(tool))
 		toolrow.add_child(button)
 	var tool_spacer := Control.new()
@@ -613,15 +714,6 @@ func _build_notes_page() -> Control:
 	var bpm_button := _button("⌁ BPM graph", PANEL_ALT)
 	bpm_button.pressed.connect(_toggle_bpm_graph)
 	toolrow.add_child(bpm_button)
-	var bpm_input := SpinBox.new()
-	bpm_input.min_value = 20
-	bpm_input.max_value = 500
-	bpm_input.step = 0.01
-	bpm_input.value = bpm
-	bpm_input.custom_minimum_size.x = 105
-	bpm_input.prefix = "BPM "
-	bpm_input.value_changed.connect(_on_initial_bpm_changed)
-	toolrow.add_child(bpm_input)
 	center.add_child(toolrow)
 
 	var workarea := HBoxContainer.new()
@@ -681,10 +773,23 @@ func _build_notes_page() -> Control:
 	snapping_page.add_theme_constant_override("separation", 8)
 	snapping_page.add_child(_section_title("Snapping", "PLACEMENT"))
 	var auto_advance_toggle := CheckBox.new()
+	auto_advance_toggle.focus_mode = Control.FOCUS_NONE
 	auto_advance_toggle.text = "Auto-advance"
-	auto_advance_toggle.toggled.connect(func(enabled): auto_advance = enabled)
+	auto_advance_toggle.toggled.connect(
+		func(enabled):
+			auto_advance = enabled
+			if auto_advance_badge != null:
+				for child in auto_advance_badge.get_children():
+					if child is MarginContainer:
+						for badge_child in child.get_children():
+							if badge_child is Label:
+								badge_child.text = (
+									"AUTO-ADVANCE ON" if enabled else "AUTO-ADVANCE OFF"
+								)
+	)
 	snapping_page.add_child(auto_advance_toggle)
 	var snapping_toggle := CheckBox.new()
+	snapping_toggle.focus_mode = Control.FOCUS_NONE
 	snapping_toggle.text = "Enable snapping (Shift bypasses)"
 	snapping_toggle.button_pressed = true
 	snapping_toggle.toggled.connect(
@@ -700,17 +805,30 @@ func _build_notes_page() -> Control:
 	grid_x_slider.max_value = 32
 	grid_x_slider.step = 1
 	grid_x_slider.value = 3
+	var grid_x_row := HBoxContainer.new()
 	grid_x_slider.value_changed.connect(_on_grid_x_changed)
-	snapping_page.add_child(grid_x_slider)
+	grid_x_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid_x_row.add_child(grid_x_slider)
+	var grid_x_value := _label("3", 11, CYAN)
+	grid_x_slider.value_changed.connect(func(v): grid_x_value.text = str(int(v)))
+	grid_x_row.add_child(grid_x_value)
+	snapping_page.add_child(grid_x_row)
 	snapping_page.add_child(_label("Grid divisor · Y", 11, TEXT))
 	grid_y_slider = HSlider.new()
 	grid_y_slider.min_value = 1
 	grid_y_slider.max_value = 32
 	grid_y_slider.step = 1
 	grid_y_slider.value = 3
+	var grid_y_row := HBoxContainer.new()
 	grid_y_slider.value_changed.connect(_on_grid_y_changed)
-	snapping_page.add_child(grid_y_slider)
+	grid_y_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid_y_row.add_child(grid_y_slider)
+	var grid_y_value := _label("3", 11, CYAN)
+	grid_y_slider.value_changed.connect(func(v): grid_y_value.text = str(int(v)))
+	grid_y_row.add_child(grid_y_value)
+	snapping_page.add_child(grid_y_row)
 	var link_snap := CheckBox.new()
+	link_snap.focus_mode = Control.FOCUS_NONE
 	link_snap.text = "Link X and Y"
 	link_snap.button_pressed = true
 	link_snap.add_to_group("grid_snap_link")
@@ -751,22 +869,39 @@ func _build_notes_page() -> Control:
 	graphics_page.add_theme_constant_override("separation", 10)
 	graphics_page.add_child(_section_title("Graphics", "PLAYBACK"))
 	var autoplay_toggle := CheckBox.new()
+	autoplay_toggle.focus_mode = Control.FOCUS_NONE
 	autoplay_toggle.text = "Auto-play cursor"
 	autoplay_toggle.button_pressed = true
 	autoplay_toggle.toggled.connect(func(enabled): autoplay_cursor = enabled)
 	graphics_page.add_child(autoplay_toggle)
 	graphics_page.add_child(_label("Cursor smoothness", 11, TEXT))
+	var smoothness_row := HBoxContainer.new()
 	var smoothness := HSlider.new()
 	smoothness.min_value = 0.0
 	smoothness.max_value = 1.0
+	smoothness.step = 0.01
 	smoothness.value = 0.45
-	graphics_page.add_child(smoothness)
+	smoothness.value_changed.connect(func(v): cursor_smoothness_value = v)
+	smoothness.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	smoothness_row.add_child(smoothness)
+	var smoothness_value := _label("0.45", 11, CYAN)
+	smoothness.value_changed.connect(func(v): smoothness_value.text = "%.2f" % v)
+	smoothness_row.add_child(smoothness_value)
+	graphics_page.add_child(smoothness_row)
 	graphics_page.add_child(_label("Approach rate", 11, TEXT))
+	var approach_row := HBoxContainer.new()
 	var approach_rate := HSlider.new()
 	approach_rate.min_value = 0.2
 	approach_rate.max_value = 3.0
+	approach_rate.step = 0.01
 	approach_rate.value = 1.0
-	graphics_page.add_child(approach_rate)
+	approach_rate.value_changed.connect(func(v): approach_rate_value = v)
+	approach_rate.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	approach_row.add_child(approach_rate)
+	var approach_value := _label("1.00", 11, CYAN)
+	approach_rate.value_changed.connect(func(v): approach_value.text = "%.2f" % v)
+	approach_row.add_child(approach_value)
+	graphics_page.add_child(approach_row)
 	options_stack.add_child(graphics_page)
 	options_pages["Graphics"] = graphics_page
 
@@ -798,6 +933,7 @@ func _build_notes_page() -> Control:
 	options_stack.add_child(edit_page)
 	options_pages["Edit"] = edit_page
 	_show_options_page("Snapping")
+	_set_tool(current_tool)
 	workarea.add_child(_pad(options, 10, 10, 10, 10))
 
 	var bottom := HBoxContainer.new()
@@ -831,8 +967,13 @@ func _build_notes_page() -> Control:
 	merge_layer_button.pressed.connect(_merge_layer)
 	layerhead.add_child(merge_layer_button)
 	layercol.add_child(layerhead)
+	var layer_scroll := ScrollContainer.new()
+	layer_scroll.custom_minimum_size.y = 74
+	layer_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	layercol.add_child(layer_scroll)
 	layer_list = VBoxContainer.new()
-	layercol.add_child(layer_list)
+	layer_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	layer_scroll.add_child(layer_list)
 	bottom.add_child(_pad(layerpanel, 10, 10, 8, 8))
 	_refresh_object_list()
 	_refresh_layers()
@@ -882,20 +1023,30 @@ func _build_preview_page() -> Control:
 	)
 	sidecol.add_child(playtest_hint)
 	var check := CheckBox.new()
+	check.focus_mode = Control.FOCUS_NONE
 	check.text = "Auto-play cursor"
 	check.button_pressed = true
 	check.toggled.connect(func(v): autoplay_cursor = v)
 	sidecol.add_child(check)
+	sidecol.add_child(_label("Preview approach rate", 11, TEXT))
 	var speed := HSlider.new()
 	speed.min_value = 0.5
 	speed.max_value = 1.5
-	speed.value = 1.0
+	speed.value = approach_rate_value
 	speed.value_changed.connect(
 		func(v):
-			playback_speed = v
-			player.pitch_scale = v
+			approach_rate_value = v
+			if preview_grid != null:
+				preview_grid.approach_rate = v
+				preview_grid.refresh()
 	)
-	sidecol.add_child(speed)
+	var preview_rate_row := HBoxContainer.new()
+	speed.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	preview_rate_row.add_child(speed)
+	var preview_rate_value := _label("%.2f" % approach_rate_value, 11, CYAN)
+	speed.value_changed.connect(func(v): preview_rate_value.text = "%.2f" % v)
+	preview_rate_row.add_child(preview_rate_value)
+	sidecol.add_child(preview_rate_row)
 	sidecol.add_child(_button("Restart preview", PANEL_ALT))
 	page.add_child(_pad(side, 16, 16, 14, 14))
 	return _pad(page, 10, 10, 10, 10)
@@ -917,10 +1068,12 @@ func _build_export_page() -> Control:
 	format.add_item("JSON (debug)")
 	col.add_child(_field("Format", format))
 	var settings := CheckBox.new()
+	settings.focus_mode = Control.FOCUS_NONE
 	settings.text = "Bake paths, curves and brush strokes into simple notes"
 	settings.button_pressed = true
 	col.add_child(settings)
 	var notes_toggle := CheckBox.new()
+	notes_toggle.focus_mode = Control.FOCUS_NONE
 	notes_toggle.text = "Include metadata and layer colors"
 	notes_toggle.button_pressed = true
 	col.add_child(notes_toggle)
@@ -1012,6 +1165,7 @@ func _load_audio(path: String) -> void:
 	status_label.text = "%s · %.2fs · waveform %s" % [path.get_file(), duration, loader.last_source]
 	if audio_file_label != null:
 		audio_file_label.text = path.get_file()
+	_show_tab(active_tab)
 	if (
 		meta_fields.has("Title")
 		and (meta_fields["Title"] as LineEdit).text == "Untitled Rhythia map"
@@ -1048,6 +1202,7 @@ func _on_snap_link_toggled(enabled: bool) -> void:
 
 func _on_grid_x_changed(value: float) -> void:
 	grid.snap_x = int(value)
+	grid.refresh()
 	for node in get_tree().get_nodes_in_group("grid_snap_link"):
 		var checkbox := node as CheckBox
 		if checkbox != null and checkbox.button_pressed:
@@ -1056,6 +1211,7 @@ func _on_grid_x_changed(value: float) -> void:
 
 func _on_grid_y_changed(value: float) -> void:
 	grid.snap_y = int(value)
+	grid.refresh()
 	for node in get_tree().get_nodes_in_group("grid_snap_link"):
 		var checkbox := node as CheckBox
 		if checkbox != null and checkbox.button_pressed:
@@ -1220,6 +1376,10 @@ func _append_note(
 
 func _set_tool(tool: String) -> void:
 	current_tool = tool
+	for name in tool_buttons:
+		var button: Button = tool_buttons[name]
+		var border := Color.WHITE if name == tool else BORDER
+		button.add_theme_stylebox_override("normal", _style(PANEL_ALT, 8, border))
 	_toast("%s tool selected" % tool)
 
 
@@ -1305,10 +1465,9 @@ func _add_tree_item(
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.pressed.connect(action)
 	row.add_child(b)
-	var pin := _button("⌖", PANEL_ALT)
-	row.add_child(pin)
+	b.tooltip_text = "%s · %s" % [_format_time(time), color.to_html()]
+	b.text += "  ·  " + _format_time(time)
 	tree_list.add_child(row)
-	tree_list.add_child(_label("     %s" % _format_time(time), 9, MUTED))
 
 
 func _show_properties() -> void:
@@ -1356,7 +1515,7 @@ func _show_properties() -> void:
 				selected.bar = _time_to_bar(v)
 				_record_history()
 				_refresh_object_list()
-		)
+				)
 	)
 	fields.add_child(
 		_property_spin(
@@ -1369,7 +1528,7 @@ func _show_properties() -> void:
 				selected.x = v
 				_record_history()
 				_sync_grid()
-		)
+				)
 	)
 	fields.add_child(
 		_property_spin(
@@ -1382,7 +1541,7 @@ func _show_properties() -> void:
 				selected.y = v
 				_record_history()
 				_sync_grid()
-		)
+				)
 	)
 	var layeropt := OptionButton.new()
 	for layer in layers:
@@ -1790,6 +1949,7 @@ func _issue(level: String, text: String) -> Control:
 func _button(text: String, color: Color) -> Button:
 	var b := Button.new()
 	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
 	b.add_theme_stylebox_override("normal", _style(color, 8, BORDER))
 	b.add_theme_stylebox_override(
 		"hover", _style(Color(color).lightened(0.10), 8, Color("#536074"))

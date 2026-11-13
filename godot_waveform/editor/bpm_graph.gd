@@ -31,6 +31,7 @@ func _ready() -> void:
 	value_spin.step = 0.01
 	value_dialog.add_child(value_spin)
 	value_dialog.confirmed.connect(_apply_input_value)
+	value_spin.get_line_edit().text_submitted.connect(_submit_input_value)
 	add_child(value_dialog)
 	queue_redraw()
 
@@ -118,11 +119,21 @@ func _on_context_action(id: int) -> void:
 		return
 	value_spin.value = points[selected].y
 	value_dialog.popup_centered(Vector2i(300, 120))
+	var edit := value_spin.get_line_edit()
+	edit.grab_focus.call_deferred()
+	edit.select_all.call_deferred()
+
+
+func _submit_input_value(text: String) -> void:
+	if text.is_valid_float():
+		value_spin.value = clampf(float(text), min_bpm, max_bpm)
+	_apply_input_value()
+	value_dialog.hide()
 
 
 func _apply_input_value() -> void:
 	if selected >= 0 and selected < points.size():
-		points[selected] = Vector2(points[selected].x, value_spin.value)
+		points[selected] = Vector2(points[selected].x, snappedf(value_spin.value, 0.01))
 		queue_redraw()
 		points_changed.emit(points)
 
@@ -131,10 +142,9 @@ func _value(pos: Vector2) -> Vector2:
 	var ratio := clampf(pos.x / maxf(size.x, 1.0), 0.0, 1.0)
 	if waveform != null:
 		ratio = waveform.view_start + ratio / maxf(waveform.zoom, 1.0)
-	return Vector2(
-		clampf(ratio, 0.0, 1.0),
-		lerpf(max_bpm, min_bpm, clampf(pos.y / maxf(size.y, 1.0), 0.0, 1.0))
-	)
+	var bpm_value := lerpf(max_bpm, min_bpm, clampf(pos.y / maxf(size.y, 1.0), 0.0, 1.0))
+	var bpm_step := 0.01 if Input.is_key_pressed(KEY_SHIFT) else 1.0
+	return Vector2(clampf(ratio, 0.0, 1.0), snappedf(bpm_value, bpm_step))
 
 
 func _pixel(point: Vector2) -> Vector2:

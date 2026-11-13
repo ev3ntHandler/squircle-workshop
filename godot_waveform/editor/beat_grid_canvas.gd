@@ -15,6 +15,11 @@ var is_3d_preview := false
 var snap_enabled := true
 var snap_x := 3
 var snap_y := 3
+var current_time := 0.0
+var approach_rate := 1.0
+var right_dragging := false
+var right_drag_last := Vector2.ZERO
+var deleted_during_drag: Dictionary = {}
 var grid_offset := Vector2.ZERO
 var active_layer_color := Color("#d779fa")
 var visible_layers: Dictionary = {"Layer 1": true}
@@ -37,27 +42,44 @@ func _gui_input(event: InputEvent) -> void:
 		grid_hovered.emit(hover)
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			grid_dragged.emit(hover)
+		if right_dragging and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+			_delete_notes_along_segment(right_drag_last, event.position)
+			right_drag_last = event.position
+			accept_event()
 		queue_redraw()
-	elif event is InputEventMouseButton and event.pressed:
+	elif event is InputEventMouseButton:
 		var pos := Vector2(
 			clampf(event.position.x / size.x, 0.0, 1.0), clampf(event.position.y / size.y, 0.0, 1.0)
 		)
-		if event.button_index == MOUSE_BUTTON_LEFT:
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			grid_clicked.emit(pos)
 			accept_event()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			var nearest := ""
-			var best := 0.075
-			for note in notes:
-				var distance := pos.distance_to(
-					Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
-				)
-				if distance < best:
-					best = distance
-					nearest = str(note.get("id", ""))
-			if not nearest.is_empty():
-				note_delete_requested.emit(nearest)
-				accept_event()
+			if event.pressed:
+				right_dragging = true
+				right_drag_last = event.position
+				deleted_during_drag.clear()
+				_delete_notes_at(event.position)
+			else:
+				right_dragging = false
+				deleted_during_drag.clear()
+			accept_event()
+
+
+func _delete_notes_at(pixel_position: Vector2) -> void:
+	_delete_notes_along_segment(pixel_position, pixel_position)
+
+
+func _delete_notes_along_segment(from: Vector2, to: Vector2) -> void:
+	for note in notes.duplicate():
+		var note_id := str(note.get("id", ""))
+		if deleted_during_drag.has(note_id):
+			continue
+		var target := _project(Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5))))
+		var radius := 27.0 if is_3d_preview else 30.0
+		if Geometry2D.get_closest_point_to_segment(target, from, to).distance_to(target) <= radius:
+			deleted_during_drag[note_id] = true
+			note_delete_requested.emit(note_id)
 
 
 func _notification(what: int) -> void:
@@ -85,14 +107,16 @@ func _draw() -> void:
 	draw_colored_polygon(
 		PackedVector2Array([top_left, top_right, bottom_right, bottom_left]), Color("#11151d")
 	)
-	for i in range(4):
-		var fraction := i / 3.0
+	for i in range(snap_x + 1):
+		var fraction := clampf(float(i) / float(snap_x) + grid_offset.x / float(snap_x), 0.0, 1.0)
 		draw_line(
 			_project(Vector2(fraction, 0)),
 			_project(Vector2(fraction, 1)),
 			Color(0.36, 0.4, 0.48, 0.55),
 			1.0
 		)
+	for i in range(snap_y + 1):
+		var fraction := clampf(float(i) / float(snap_y) + grid_offset.y / float(snap_y), 0.0, 1.0)
 		draw_line(
 			_project(Vector2(0, fraction)),
 			_project(Vector2(1, fraction)),
@@ -119,20 +143,31 @@ func _draw() -> void:
 				14,
 				Color(0.48, 0.51, 0.59, 0.24)
 			)
+	var approach_window := 2.4 / maxf(approach_rate, 0.2)
 	for note in notes:
 		var layer_name := str(note.get("layer", "Layer 1"))
 		if not bool(visible_layers.get(layer_name, true)):
 			continue
-		var p := _project(Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5))))
-		var radius := 15.0 if is_3d_preview else 20.0
+		var arrival := float(note.get("time", 0.0)) - current_time
+		if is_3d_preview and (arrival < 0.0 or arrival > approach_window):
+			continue
+		if not is_3d_preview:
+			arrival = 0.0
+		var target := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
+		var progress := 1.0 - arrival / approach_window
+		var direction := (target - Vector2(0.5, 0.5)).normalized()
+		if direction.length_squared() < 0.01:
+			direction = Vector2.UP
+		var incoming := target + direction * arrival / approach_window * 0.28
+		var p := _project(incoming)
+		var radius := 25.0 if not is_3d_preview else 22.0
 		var note_rect := Rect2(p - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 		var color: Color = layer_colors.get(layer_name, active_layer_color)
-		color.a = 0.22 * float(layer_opacities.get(layer_name, 0.9))
+		color.a = (0.18 + progress * 0.72) * float(layer_opacities.get(layer_name, 0.9))
 		draw_rect(note_rect, color, true)
 		var outline: Color = layer_colors.get(layer_name, active_layer_color)
-		outline.a = 0.95 * float(layer_opacities.get(layer_name, 0.9))
+		outline.a = color.a
 		draw_rect(note_rect, outline, false, 2.0)
-		draw_circle(p, 5.0 if is_3d_preview else 6.0, Color.WHITE)
 		if str(note.get("id", "")) == selected_id or selected_ids.has(str(note.get("id", ""))):
 			draw_rect(note_rect.grow(4), Color("#f5cf67"), false, 2.0)
 	if ghost_position.x >= 0.0:
@@ -150,7 +185,6 @@ func _draw() -> void:
 		ghost_color.a = 0.35
 		var point := _project(ghost)
 		draw_rect(Rect2(point - Vector2(19, 19), Vector2(38, 38)), ghost_color, false, 2.0)
-		draw_circle(point, 5.0, Color(1, 1, 1, 0.65))
 	if cursor_position.x >= 0.0:
 		var cursor := _project(cursor_position)
 		draw_circle(cursor, 10.0, Color(0.52, 0.86, 1.0, 0.28))
