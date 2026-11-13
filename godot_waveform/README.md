@@ -1,4 +1,12 @@
-# Waveform Studio — audio waveforms from `.wav` / `.ogg` / `.mp3` in Godot 4
+# Squircle Workshop — Rhythia beatmap editor + waveform toolkit
+
+Squircle Workshop is a Godot 4.8 GDScript beatmap-editor prototype for Rhythia, a hover-to-hit rhythm game. Open `project.godot` and run the project to launch the editor. It starts with the bundled demo track; import `.wav`, `.ogg`, or `.mp3` audio from the top waveform toolbar.
+
+The editor includes Metadata, Notes, Preview, and Export workspaces. In Notes, click the 3×3 playfield to place notes, use **Shift** to bypass position snapping, or click the waveform to seek/place at a timestamp. Right-drag over the waveform to select notes. The minimap seeks through the track; the BPM graph supports adding and dragging automation points (right-click a point to remove it). Use Tree/Library, markers/comments, layers, and the inspector to organize and edit notes. Pencil, Brush, Line, Path, and Curve gestures currently bake to simple note objects. The Preview is an interactive 3×3 playtest simulation. Export is deliberately marked WIP and currently shows verifier warnings rather than writing a Rhythia file.
+
+The waveform is rendered by the included reusable toolkit below. Its cache, zoom/pan and decode implementation remain available for standalone projects.
+
+## Waveform toolkit
 
 Turn any audio file into a **waveform image** (`Image`, `ImageTexture` or a PNG on disk) and draw it
 in a UI — with a playhead, click-to-seek, stereo split, **horizontal zoom** and full styling control.
