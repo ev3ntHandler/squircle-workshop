@@ -6,8 +6,17 @@ signal grid_dragged(position: Vector2)
 signal grid_hovered(position: Vector2)
 signal note_delete_requested(id: String)
 signal line_completed(start: Vector2, finish: Vector2)
+signal shape_selected(id: String)
+signal shape_point_edit_started(id: String)
+signal shape_point_changed(id: String, point_index: int, position: Vector2)
+signal shape_point_edit_finished(id: String)
 
 var notes: Array[Dictionary] = []
+var shapes: Array[Dictionary] = []
+var selected_shape_id := ""
+var dragging_shape_id := ""
+var dragging_shape_point := -1
+var interactive := true
 var selected_id := ""
 var selected_ids: Array[String] = []
 var cursor_position := Vector2(-1.0, -1.0)
@@ -40,14 +49,22 @@ func _ready() -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
+	if not interactive and event is InputEventMouseButton:
+		accept_event()
+		return
 	if event is InputEventMouseMotion:
 		var hover := _normalized_position(event.position)
 		ghost_position = hover
 		grid_hovered.emit(hover)
+		if not dragging_shape_id.is_empty() and dragging_shape_point >= 0:
+			shape_point_changed.emit(dragging_shape_id, dragging_shape_point, hover)
+			accept_event()
+			queue_redraw()
+			return
 		if line_dragging:
 			line_preview_position = hover
 			accept_event()
-		elif Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		elif interactive and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			grid_dragged.emit(hover)
 		if right_dragging and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			_delete_notes_along_segment(right_drag_last, event.position)
@@ -57,6 +74,26 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		var pos := _normalized_position(event.position)
 		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed and active_tool == "Select":
+				var point_hit := _shape_point_at(event.position)
+				if point_hit.size() == 2:
+					dragging_shape_id = str(point_hit[0])
+					dragging_shape_point = int(point_hit[1])
+					shape_point_edit_started.emit(dragging_shape_id)
+					accept_event()
+					return
+				var hit_shape := _shape_at(event.position)
+				if not hit_shape.is_empty():
+					shape_selected.emit(hit_shape)
+					accept_event()
+					return
+			if not event.pressed and not dragging_shape_id.is_empty():
+				var finished_id := dragging_shape_id
+				dragging_shape_id = ""
+				dragging_shape_point = -1
+				shape_point_edit_finished.emit(finished_id)
+				accept_event()
+				return
 			if event.pressed and active_tool == "Line":
 				line_start = pos
 				line_preview_position = pos
@@ -81,6 +118,87 @@ func _gui_input(event: InputEvent) -> void:
 				right_dragging = false
 				deleted_during_drag.clear()
 			accept_event()
+
+
+func _shape_point_at(pixel_position: Vector2) -> Array:
+	for shape in shapes:
+		if str(shape.get("id", "")) != selected_shape_id:
+			continue
+		var points: Array = shape.get("points", [])
+		for index in range(points.size()):
+			if _project(points[index]).distance_to(pixel_position) <= 18.0:
+				return [selected_shape_id, index]
+	return []
+
+
+func _shape_at(pixel_position: Vector2) -> String:
+	var closest_id := ""
+	var closest_distance := 14.0
+	for shape in shapes:
+		var samples := _shape_samples(shape)
+		if (
+			samples.size() == 1
+			and _project(samples[0]).distance_to(pixel_position) < closest_distance
+		):
+			closest_id = str(shape.get("id", ""))
+			closest_distance = _project(samples[0]).distance_to(pixel_position)
+		for index in range(samples.size() - 1):
+			var a := _project(samples[index])
+			var b := _project(samples[index + 1])
+			var distance := (
+				Geometry2D
+				. get_closest_point_to_segment(pixel_position, a, b)
+				. distance_to(pixel_position)
+			)
+			if distance < closest_distance:
+				closest_id = str(shape.get("id", ""))
+				closest_distance = distance
+	return closest_id
+
+
+func _shape_samples(shape: Dictionary) -> Array[Vector2]:
+	var points: Array = shape.get("points", [])
+	var result: Array[Vector2] = []
+	if points.is_empty():
+		return result
+	if points.size() == 1:
+		result.append(points[0])
+		return result
+	var is_curve := str(shape.get("type", "")) == "Curve"
+	for segment in range(points.size() - 1):
+		for subdivision in range(9):
+			if segment > 0 and subdivision == 0:
+				continue
+			var t := float(subdivision) / 8.0
+			if is_curve and points.size() >= 3:
+				var p0: Vector2 = points[maxi(segment - 1, 0)]
+				var p1: Vector2 = points[segment]
+				var p2: Vector2 = points[segment + 1]
+				var p3: Vector2 = points[mini(segment + 2, points.size() - 1)]
+				var t2 := t * t
+				var t3 := t2 * t
+				result.append(
+					(
+						0.5
+						* (
+							(2.0 * p1)
+							+ (-p0 + p2) * t
+							+ (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+							+ (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
+						)
+					)
+				)
+			else:
+				result.append(points[segment].lerp(points[segment + 1], t))
+	return result
+
+
+func _snap_preview_point(point: Vector2) -> Vector2:
+	if not snap_enabled or Input.is_key_pressed(KEY_SHIFT):
+		return point
+	point.x = (round(point.x * snap_x - grid_offset.x - 0.5) + grid_offset.x + 0.5) / float(snap_x)
+	point.y = (round(point.y * snap_y - grid_offset.y - 0.5) + grid_offset.y + 0.5) / float(snap_y)
+	return Vector2(clampf(point.x, 0.02, 0.98), clampf(point.y, 0.02, 0.98))
 
 
 func _normalized_position(position: Vector2) -> Vector2:
@@ -187,7 +305,8 @@ func _draw() -> void:
 			opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
 		var target := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
 		var p := _project(target)
-		var radius := 25.0 if not is_3d_preview else 22.0
+		var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
+		var radius := (25.0 if not is_3d_preview else 22.0) * growth
 		var note_rect := Rect2(p - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 		var color: Color = layer_colors.get(layer_name, active_layer_color)
 		color.a = opacity * float(layer_opacities.get(layer_name, 0.9))
@@ -197,10 +316,53 @@ func _draw() -> void:
 		draw_rect(note_rect, outline, false, 2.0)
 		if str(note.get("id", "")) == selected_id or selected_ids.has(str(note.get("id", ""))):
 			draw_rect(note_rect.grow(4), Color("#f5cf67"), false, 2.0)
+	for shape in shapes:
+		var shape_id := str(shape.get("id", ""))
+		var samples := _shape_samples(shape)
+		if samples.is_empty():
+			continue
+		var layer_name := str(shape.get("layer", "Layer 1"))
+		if not bool(visible_layers.get(layer_name, true)):
+			continue
+		var shape_start := float(shape.get("time", 0.0))
+		var shape_duration := maxf(float(shape.get("duration", 1.0)), 0.001)
+		for sample_index in range(samples.size()):
+			var progress := float(sample_index) / float(maxi(samples.size() - 1, 1))
+			var arrival := shape_start + progress * shape_duration - current_time
+			var opacity := 1.0
+			if animate_notes:
+				if arrival < 0.0 or arrival > approach_window:
+					continue
+				opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
+			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
+			var radius := (25.0 if not is_3d_preview else 22.0) * growth
+			var center := _project(samples[sample_index])
+			var rect := Rect2(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
+			var color: Color = layer_colors.get(layer_name, active_layer_color)
+			color.a = opacity * float(layer_opacities.get(layer_name, 0.9))
+			draw_rect(rect, color, true)
+			if shape_id == selected_shape_id:
+				draw_rect(rect.grow(3.0), Color("#f5cf67", 0.9), false, 1.5)
+		if shape_id == selected_shape_id:
+			var control_points: Array = shape.get("points", [])
+			for index in range(control_points.size()):
+				var handle := _project(control_points[index])
+				draw_circle(handle, 7.0, Color("#f5cf67"))
+				draw_circle(handle, 3.0, Color("#17191e"))
 	if line_start.x >= 0.0 and line_preview_position.x >= 0.0:
-		var line_color := active_layer_color
-		line_color.a = 0.52
-		draw_line(_project(line_start), _project(line_preview_position), line_color, 3.0, true)
+		for preview_index in range(9):
+			var amount := float(preview_index) / 8.0
+			var preview_point := _snap_preview_point(line_start.lerp(line_preview_position, amount))
+			var preview_center := _project(preview_point)
+			var radius := 25.0 if not is_3d_preview else 22.0
+			var rect := Rect2(
+				preview_center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0)
+			)
+			var preview_color := active_layer_color
+			preview_color.a = 0.24
+			draw_rect(rect, preview_color, true)
+			preview_color.a = 0.5
+			draw_rect(rect, preview_color, false, 1.5)
 	if ghost_position.x >= 0.0:
 		var ghost := ghost_position
 		if snap_enabled and not Input.is_key_pressed(KEY_SHIFT):

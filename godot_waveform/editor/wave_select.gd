@@ -21,6 +21,7 @@ var left_start_x := 0.0
 var start_view := 0.0
 var hit_note_id := ""
 var bar_seconds := 1.0
+var bpm_points: Array[Vector2] = [Vector2(0.0, 128.0), Vector2(1.0, 128.0)]
 var fit_only := false
 var fit_dragging := false
 var divisions_per_bar := 8
@@ -117,9 +118,12 @@ func _gui_input(event: InputEvent) -> void:
 				0.0,
 				1.0 - span
 			)
-			var bar_fraction := bar_seconds / maxf(duration, 0.001)
-			if bar_fraction > 0.0:
-				raw_start = round(raw_start / bar_fraction) * bar_fraction
+			if duration > 0.0:
+				var tempo_points := _sorted_bpm_points()
+				var target_beats := (
+					round(_beat_count_at_time(raw_start * duration, tempo_points) / 4.0) * 4.0
+				)
+				raw_start = _time_at_beat(target_beats, tempo_points) / duration
 			pan_target_start = clampf(raw_start, 0.0, 1.0 - span)
 			pan_target_active = true
 			queue_redraw()
@@ -157,35 +161,82 @@ func _ratio(x: float) -> float:
 	return clampf(waveform.view_start + clampf(x / maxf(size.x, 1.0), 0.0, 1.0) * span, 0.0, 1.0)
 
 
+func _sorted_bpm_points() -> Array[Vector2]:
+	var sorted: Array[Vector2] = []
+	for point in bpm_points:
+		sorted.append(point)
+	sorted.sort_custom(func(a: Vector2, b: Vector2): return a.x < b.x)
+	return sorted
+
+
+func _bpm_at_time(time: float, points: Array[Vector2]) -> float:
+	if points.is_empty():
+		return 240.0 / maxf(bar_seconds, 0.001)
+	var ratio := clampf(time / maxf(duration, 0.001), 0.0, 1.0)
+	if ratio <= points[0].x:
+		return maxf(points[0].y, 1.0)
+	for index in range(points.size() - 1):
+		var left: Vector2 = points[index]
+		var right: Vector2 = points[index + 1]
+		if ratio <= right.x:
+			var width := maxf(right.x - left.x, 0.000001)
+			return maxf(lerpf(left.y, right.y, (ratio - left.x) / width), 1.0)
+	return maxf(points[-1].y, 1.0)
+
+
+func _beat_count_at_time(time: float, points: Array[Vector2]) -> float:
+	var end_time := clampf(time, 0.0, duration)
+	var boundaries: Array[float] = [0.0, end_time]
+	for point in points:
+		var point_time := clampf(point.x, 0.0, 1.0) * duration
+		if point_time > 0.0 and point_time < end_time:
+			boundaries.append(point_time)
+	boundaries.sort()
+	var beats := 0.0
+	for index in range(boundaries.size() - 1):
+		var left_time: float = boundaries[index]
+		var right_time: float = boundaries[index + 1]
+		var average_bpm := (
+			(_bpm_at_time(left_time, points) + _bpm_at_time(right_time, points)) * 0.5
+		)
+		beats += average_bpm * (right_time - left_time) / 60.0
+	return beats
+
+
+func _time_at_beat(target_beats: float, points: Array[Vector2]) -> float:
+	if target_beats <= 0.0:
+		return 0.0
+	var low := 0.0
+	var high := duration
+	for _iteration in range(22):
+		var midpoint := (low + high) * 0.5
+		if _beat_count_at_time(midpoint, points) < target_beats:
+			low = midpoint
+		else:
+			high = midpoint
+	return (low + high) * 0.5
+
+
 func _draw() -> void:
 	if fit_only:
 		return
 	if waveform != null and duration > 0.0:
 		var visible_span := 1.0 / maxf(waveform.zoom, 1.0)
-		var first_bar := floori(waveform.view_start * duration / maxf(bar_seconds, 0.001))
-		var last_bar := ceili(
-			(waveform.view_start + visible_span) * duration / maxf(bar_seconds, 0.001)
-		)
-		for bar_index in range(first_bar, last_bar + 1):
-			var bar_time := float(bar_index) * bar_seconds
-			var bar_ratio := bar_time / duration
-			var bar_x := (bar_ratio - waveform.view_start) / visible_span * size.x
-			draw_line(Vector2(bar_x, 0), Vector2(bar_x, size.y), Color(1.0, 1.0, 1.0, 0.48), 2.0)
-			for subdivision in range(1, maxi(divisions_per_bar, 1)):
-				var sub_ratio := (
-					(
-						bar_time
-						+ bar_seconds * float(subdivision) / float(maxi(divisions_per_bar, 1))
-					)
-					/ duration
-				)
-				var sub_x := (sub_ratio - waveform.view_start) / visible_span * size.x
-				draw_line(
-					Vector2(sub_x, size.y * 0.22),
-					Vector2(sub_x, size.y * 0.78),
-					Color(0.82, 0.88, 1.0, 0.22),
-					1.0
-				)
+		var visible_start := waveform.view_start * duration
+		var visible_end := minf((waveform.view_start + visible_span) * duration, duration)
+		var tempo_points := _sorted_bpm_points()
+		var step_beats := 4.0 / float(maxi(divisions_per_bar, 1))
+		var first_step := floori(_beat_count_at_time(visible_start, tempo_points) / step_beats)
+		var last_step := ceili(_beat_count_at_time(visible_end, tempo_points) / step_beats)
+		for step_index in range(first_step, last_step + 1):
+			var time := _time_at_beat(float(step_index) * step_beats, tempo_points)
+			if time < visible_start or time > visible_end:
+				continue
+			var x := (time / duration - waveform.view_start) / visible_span * size.x
+			var is_bar := step_index % maxi(divisions_per_bar, 1) == 0
+			var y_start := size.y * (0.5 if is_bar else 0.75)
+			var color := Color(1.0, 1.0, 1.0, 0.48) if is_bar else Color(0.82, 0.88, 1.0, 0.22)
+			draw_line(Vector2(x, y_start), Vector2(x, size.y), color, 2.0 if is_bar else 1.0)
 		for note in notes:
 			var layer_name := str(note.get("layer", "Layer 1"))
 			if not bool(visible_layers.get(layer_name, true)):
