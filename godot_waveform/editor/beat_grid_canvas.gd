@@ -1,10 +1,11 @@
 extends Control
 class_name BeatGridCanvas
 
-signal grid_clicked(position: Vector2)
+signal grid_clicked(position: Vector2, ctrl_pressed: bool)
 signal grid_dragged(position: Vector2)
 signal grid_hovered(position: Vector2)
 signal note_delete_requested(id: String)
+signal line_completed(start: Vector2, finish: Vector2)
 
 var notes: Array[Dictionary] = []
 var selected_id := ""
@@ -17,6 +18,11 @@ var snap_x := 3
 var snap_y := 3
 var current_time := 0.0
 var approach_rate := 1.0
+var animate_notes := false
+var active_tool := "Pencil"
+var line_start := Vector2(-1.0, -1.0)
+var line_preview_position := Vector2(-1.0, -1.0)
+var line_dragging := false
 var right_dragging := false
 var right_drag_last := Vector2.ZERO
 var deleted_during_drag: Dictionary = {}
@@ -35,12 +41,13 @@ func _ready() -> void:
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
-		var hover := Vector2(
-			clampf(event.position.x / size.x, 0.0, 1.0), clampf(event.position.y / size.y, 0.0, 1.0)
-		)
+		var hover := _normalized_position(event.position)
 		ghost_position = hover
 		grid_hovered.emit(hover)
-		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if line_dragging:
+			line_preview_position = hover
+			accept_event()
+		elif Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			grid_dragged.emit(hover)
 		if right_dragging and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			_delete_notes_along_segment(right_drag_last, event.position)
@@ -48,12 +55,22 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 		queue_redraw()
 	elif event is InputEventMouseButton:
-		var pos := Vector2(
-			clampf(event.position.x / size.x, 0.0, 1.0), clampf(event.position.y / size.y, 0.0, 1.0)
-		)
-		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			grid_clicked.emit(pos)
-			accept_event()
+		var pos := _normalized_position(event.position)
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed and active_tool == "Line":
+				line_start = pos
+				line_preview_position = pos
+				line_dragging = true
+				accept_event()
+			elif not event.pressed and line_dragging:
+				var finish := pos
+				if line_start.distance_to(finish) > 0.015:
+					line_completed.emit(line_start, finish)
+				cancel_line_preview()
+				accept_event()
+			elif event.pressed:
+				grid_clicked.emit(pos, event.ctrl_pressed)
+				accept_event()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			if event.pressed:
 				right_dragging = true
@@ -64,6 +81,20 @@ func _gui_input(event: InputEvent) -> void:
 				right_dragging = false
 				deleted_during_drag.clear()
 			accept_event()
+
+
+func _normalized_position(position: Vector2) -> Vector2:
+	return Vector2(
+		clampf(position.x / maxf(size.x, 1.0), 0.0, 1.0),
+		clampf(position.y / maxf(size.y, 1.0), 0.0, 1.0)
+	)
+
+
+func cancel_line_preview() -> void:
+	line_dragging = false
+	line_start = Vector2(-1.0, -1.0)
+	line_preview_position = Vector2(-1.0, -1.0)
+	queue_redraw()
 
 
 func _delete_notes_at(pixel_position: Vector2) -> void:
@@ -149,27 +180,27 @@ func _draw() -> void:
 		if not bool(visible_layers.get(layer_name, true)):
 			continue
 		var arrival := float(note.get("time", 0.0)) - current_time
-		if is_3d_preview and (arrival < 0.0 or arrival > approach_window):
-			continue
-		if not is_3d_preview:
-			arrival = 0.0
+		var opacity := 1.0
+		if animate_notes:
+			if arrival < 0.0 or arrival > approach_window:
+				continue
+			opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
 		var target := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
-		var progress := 1.0 - arrival / approach_window
-		var direction := (target - Vector2(0.5, 0.5)).normalized()
-		if direction.length_squared() < 0.01:
-			direction = Vector2.UP
-		var incoming := target + direction * arrival / approach_window * 0.28
-		var p := _project(incoming)
+		var p := _project(target)
 		var radius := 25.0 if not is_3d_preview else 22.0
 		var note_rect := Rect2(p - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 		var color: Color = layer_colors.get(layer_name, active_layer_color)
-		color.a = (0.18 + progress * 0.72) * float(layer_opacities.get(layer_name, 0.9))
+		color.a = opacity * float(layer_opacities.get(layer_name, 0.9))
 		draw_rect(note_rect, color, true)
 		var outline: Color = layer_colors.get(layer_name, active_layer_color)
 		outline.a = color.a
 		draw_rect(note_rect, outline, false, 2.0)
 		if str(note.get("id", "")) == selected_id or selected_ids.has(str(note.get("id", ""))):
 			draw_rect(note_rect.grow(4), Color("#f5cf67"), false, 2.0)
+	if line_start.x >= 0.0 and line_preview_position.x >= 0.0:
+		var line_color := active_layer_color
+		line_color.a = 0.52
+		draw_line(_project(line_start), _project(line_preview_position), line_color, 3.0, true)
 	if ghost_position.x >= 0.0:
 		var ghost := ghost_position
 		if snap_enabled and not Input.is_key_pressed(KEY_SHIFT):

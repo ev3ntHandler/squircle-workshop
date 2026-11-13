@@ -1,9 +1,9 @@
 extends Control
 
-const SAMPLE := "res://samples/demo_track.wav"
 const GRID_SCRIPT := preload("res://editor/beat_grid_canvas.gd")
 const BPM_SCRIPT := preload("res://editor/bpm_graph.gd")
 const SELECT_SCRIPT := preload("res://editor/wave_select.gd")
+const SLIDER_SCRIPT := preload("res://editor/workshop_slider.gd")
 const INK := Color("#0b0d11")
 const PANEL := Color("#12151b")
 const PANEL_ALT := Color("#181c24")
@@ -46,6 +46,9 @@ var tab_buttons: Dictionary = {}
 var tool_buttons: Dictionary = {}
 var waveform_panel: Control
 var auto_advance_badge: Control
+var audio_loaded := false
+var cue_player: AudioStreamPlayer
+var cue_timer_remaining := 0.0
 var playing := false
 var auto_advance := false
 var autoplay_cursor := true
@@ -89,19 +92,52 @@ var selection_rect := Rect2()
 var selecting := false
 
 
+func _setup_cue_audio() -> void:
+	var bus_index := AudioServer.get_bus_index("WorkshopCue")
+	if bus_index < 0:
+		bus_index = AudioServer.bus_count
+		AudioServer.add_bus(bus_index)
+		AudioServer.set_bus_name(bus_index, "WorkshopCue")
+		AudioServer.set_bus_send(bus_index, "Master")
+		var reverb := AudioEffectReverb.new()
+		reverb.room_size = 0.72
+		reverb.wet = 0.32
+		reverb.dry = 0.72
+		AudioServer.add_bus_effect(bus_index, reverb)
+	cue_player.bus = "WorkshopCue"
+
+
+func _play_advance_cue(at_time: float) -> void:
+	if player == null or player.stream == null or cue_player == null:
+		return
+	cue_player.stop()
+	cue_player.stream = player.stream
+	cue_player.pitch_scale = playback_speed
+	cue_player.play(clampf(at_time, 0.0, maxf(duration - 0.2, 0.0)))
+	cue_timer_remaining = 0.18
+
+
 func _ready() -> void:
 	_build_theme()
 	player = AudioStreamPlayer.new()
 	player.name = "MusicPlayer"
 	add_child(player)
 	loader = WaveformLoader.new()
+	cue_player = AudioStreamPlayer.new()
+	cue_player.name = "AutoAdvanceCue"
+	cue_player.volume_db = -14.0
+	add_child(cue_player)
+	_setup_cue_audio()
 	_build_shell()
 	_record_history()
-	_load_audio(SAMPLE)
 	set_process(true)
 
 
 func _process(delta: float) -> void:
+	if cue_timer_remaining > 0.0:
+		cue_timer_remaining -= delta
+		if cue_timer_remaining <= 0.0 and cue_player.playing:
+			cue_player.stop()
 	if minimap != null:
 		minimap.zoom = 1.0
 		minimap.view_start = 0.0
@@ -142,6 +178,7 @@ func _process(delta: float) -> void:
 		mini_overlay.queue_redraw()
 	if grid != null:
 		grid.current_time = song_time
+		grid.animate_notes = playing
 		grid.approach_rate = approach_rate_value
 		var target_cursor := (
 			_cursor_for_time(song_time) if playing and autoplay_cursor else Vector2(-1, -1)
@@ -156,6 +193,7 @@ func _process(delta: float) -> void:
 		grid.refresh()
 	if preview_grid != null:
 		preview_grid.current_time = song_time
+		preview_grid.animate_notes = playing
 		preview_grid.approach_rate = approach_rate_value
 		preview_grid.cursor_position = grid.cursor_position
 		preview_grid.refresh()
@@ -221,6 +259,7 @@ func _place_keyboard_note(cell: int) -> void:
 	var position := Vector2((cell % 3 + 0.5) / 3.0, (floori(float(cell) / 3.0) + 0.5) / 3.0)
 	_append_note(position, song_time, "Pencil")
 	last_placed_position = position
+	_auto_advance_playhead()
 	_sync_grid()
 
 
@@ -482,16 +521,16 @@ func _build_waveform_strip() -> Control:
 	mini_overlay.waveform = minimap
 	mini_overlay.fit_only = true
 	minimap.add_child(mini_overlay)
-	minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	minimap.seek_requested.connect(_seek_ratio)
 	minirow.add_child(minimap)
 	var speed := _label("Speed", 10, MUTED)
 	minirow.add_child(speed)
-	speed_slider = HSlider.new()
+	speed_slider = _new_slider()
 	speed_slider.min_value = 0.5
 	speed_slider.max_value = 1.5
 	speed_slider.step = 0.05
 	speed_slider.value = 1.0
+	_set_slider_default(speed_slider, 1.0)
 	speed_slider.custom_minimum_size.x = 92
 	speed_slider.value_changed.connect(_on_speed_changed)
 	minirow.add_child(speed_slider)
@@ -539,12 +578,13 @@ func _build_transport() -> Control:
 	bar.add_child(stop)
 	time_label = _label("00:00.000  /  00:00.000", 12, Color("#f4d675"), true)
 	bar.add_child(time_label)
-	scrub_slider = HSlider.new()
+	scrub_slider = _new_slider()
 	var scrub := scrub_slider
 	scrub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scrub.min_value = 0
 	scrub.max_value = 100
 	scrub.value = 0
+	_set_slider_default(scrub, 0.0)
 	scrub.value_changed.connect(_on_scrub_changed)
 	bar.add_child(scrub)
 	timeline_progress = ProgressBar.new()
@@ -571,6 +611,8 @@ func _build_tab_pages() -> void:
 
 
 func _show_tab(tab: String) -> void:
+	if tab != "Metadata" and not audio_loaded:
+		return
 	active_tab = tab
 	var pages := {
 		"Metadata": metadata_tab, "Notes": notes_tab, "Preview": preview_tab, "Export": export_tab
@@ -579,7 +621,7 @@ func _show_tab(tab: String) -> void:
 		child.visible = child == pages.get(tab)
 	for key in tab_buttons:
 		var button: Button = tab_buttons[key]
-		button.disabled = key != "Metadata" and file_path.is_empty()
+		button.disabled = key != "Metadata" and not audio_loaded
 		button.modulate = Color.WHITE if key == tab else Color(0.58, 0.62, 0.7, 1.0)
 
 
@@ -742,6 +784,7 @@ func _build_notes_page() -> Control:
 	grid.grid_dragged.connect(_on_grid_dragged)
 	grid.grid_hovered.connect(_on_grid_hovered)
 	grid.note_delete_requested.connect(_delete_note_by_id)
+	grid.line_completed.connect(_on_line_completed)
 	gridbox.add_child(grid)
 	gridbox.add_child(
 		_label("Pencil places notes here · Shift temporarily disables snapping", 10, MUTED)
@@ -800,11 +843,12 @@ func _build_notes_page() -> Control:
 	)
 	snapping_page.add_child(snapping_toggle)
 	snapping_page.add_child(_label("Grid divisor · X", 11, TEXT))
-	grid_x_slider = HSlider.new()
+	grid_x_slider = _new_slider()
 	grid_x_slider.min_value = 1
 	grid_x_slider.max_value = 32
 	grid_x_slider.step = 1
 	grid_x_slider.value = 3
+	_set_slider_default(grid_x_slider, 3.0)
 	var grid_x_row := HBoxContainer.new()
 	grid_x_slider.value_changed.connect(_on_grid_x_changed)
 	grid_x_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -814,11 +858,12 @@ func _build_notes_page() -> Control:
 	grid_x_row.add_child(grid_x_value)
 	snapping_page.add_child(grid_x_row)
 	snapping_page.add_child(_label("Grid divisor · Y", 11, TEXT))
-	grid_y_slider = HSlider.new()
+	grid_y_slider = _new_slider()
 	grid_y_slider.min_value = 1
 	grid_y_slider.max_value = 32
 	grid_y_slider.step = 1
 	grid_y_slider.value = 3
+	_set_slider_default(grid_y_slider, 3.0)
 	var grid_y_row := HBoxContainer.new()
 	grid_y_slider.value_changed.connect(_on_grid_y_changed)
 	grid_y_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -835,10 +880,11 @@ func _build_notes_page() -> Control:
 	link_snap.toggled.connect(_on_snap_link_toggled)
 	snapping_page.add_child(link_snap)
 	snapping_page.add_child(_label("Grid offset · X", 11, TEXT))
-	var offset_x := HSlider.new()
+	var offset_x := _new_slider()
 	offset_x.min_value = -0.5
 	offset_x.max_value = 0.5
 	offset_x.step = 0.01
+	_set_slider_default(offset_x, 0.0)
 	offset_x.value_changed.connect(
 		func(value):
 			grid.grid_offset.x = value
@@ -846,10 +892,11 @@ func _build_notes_page() -> Control:
 	)
 	snapping_page.add_child(offset_x)
 	snapping_page.add_child(_label("Grid offset · Y", 11, TEXT))
-	var offset_y := HSlider.new()
+	var offset_y := _new_slider()
 	offset_y.min_value = -0.5
 	offset_y.max_value = 0.5
 	offset_y.step = 0.01
+	_set_slider_default(offset_y, 0.0)
 	offset_y.value_changed.connect(
 		func(value):
 			grid.grid_offset.y = value
@@ -861,7 +908,17 @@ func _build_notes_page() -> Control:
 	for item in ["1/1", "1/2", "1/4", "1/8", "1/16", "1/32"]:
 		beat_divisor.add_item(item)
 	beat_divisor.select(3)
+	beat_divisor.item_selected.connect(
+		func(index):
+			if wave_overlay != null:
+				wave_overlay.divisions_per_bar = int(
+					beat_divisor.get_item_text(index).split("/")[1]
+				)
+				wave_overlay.queue_redraw()
+	)
 	snapping_page.add_child(beat_divisor)
+	if wave_overlay != null:
+		wave_overlay.divisions_per_bar = 8
 	options_stack.add_child(snapping_page)
 	options_pages["Snapping"] = snapping_page
 
@@ -876,11 +933,12 @@ func _build_notes_page() -> Control:
 	graphics_page.add_child(autoplay_toggle)
 	graphics_page.add_child(_label("Cursor smoothness", 11, TEXT))
 	var smoothness_row := HBoxContainer.new()
-	var smoothness := HSlider.new()
+	var smoothness := _new_slider()
 	smoothness.min_value = 0.0
 	smoothness.max_value = 1.0
 	smoothness.step = 0.01
 	smoothness.value = 0.45
+	_set_slider_default(smoothness, 0.45)
 	smoothness.value_changed.connect(func(v): cursor_smoothness_value = v)
 	smoothness.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	smoothness_row.add_child(smoothness)
@@ -890,11 +948,12 @@ func _build_notes_page() -> Control:
 	graphics_page.add_child(smoothness_row)
 	graphics_page.add_child(_label("Approach rate", 11, TEXT))
 	var approach_row := HBoxContainer.new()
-	var approach_rate := HSlider.new()
+	var approach_rate := _new_slider()
 	approach_rate.min_value = 0.2
 	approach_rate.max_value = 3.0
 	approach_rate.step = 0.01
 	approach_rate.value = 1.0
+	_set_slider_default(approach_rate, 1.0)
 	approach_rate.value_changed.connect(func(v): approach_rate_value = v)
 	approach_rate.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	approach_row.add_child(approach_rate)
@@ -942,9 +1001,15 @@ func _build_notes_page() -> Control:
 	center.add_child(bottom)
 	var props := _panel()
 	props.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	props.custom_minimum_size.x = 340
+	var props_scroll := ScrollContainer.new()
+	props_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	props_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	props.add_child(props_scroll)
 	var propcol := VBoxContainer.new()
-	props.add_child(propcol)
-	propcol.add_child(_section_title("Selection properties", "INSPECTOR"))
+	propcol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	propcol.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	props_scroll.add_child(propcol)
 	properties_panel = propcol
 	bottom.add_child(_pad(props, 12, 12, 10, 10))
 	var layerpanel := _panel()
@@ -999,10 +1064,11 @@ func _build_preview_page() -> Control:
 	playfield.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	playfield.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	playfield.notes = note_list
-	playfield.grid_clicked.connect(func(pos): _on_grid_clicked(pos))
+	playfield.grid_clicked.connect(func(pos, ctrl_pressed): _on_grid_clicked(pos, ctrl_pressed))
 	playfield.grid_dragged.connect(_on_grid_dragged)
 	playfield.grid_hovered.connect(_on_grid_hovered)
 	playfield.note_delete_requested.connect(_delete_note_by_id)
+	playfield.line_completed.connect(_on_line_completed)
 	col.add_child(playfield)
 	col.add_child(
 		_label(
@@ -1029,10 +1095,11 @@ func _build_preview_page() -> Control:
 	check.toggled.connect(func(v): autoplay_cursor = v)
 	sidecol.add_child(check)
 	sidecol.add_child(_label("Preview approach rate", 11, TEXT))
-	var speed := HSlider.new()
+	var speed := _new_slider()
 	speed.min_value = 0.5
 	speed.max_value = 1.5
 	speed.value = approach_rate_value
+	_set_slider_default(speed, 1.0)
 	speed.value_changed.connect(
 		func(v):
 			approach_rate_value = v
@@ -1147,21 +1214,22 @@ func _build_notification() -> void:
 func _load_audio(path: String) -> void:
 	if path.is_empty():
 		return
-	file_path = path
 	status_label.text = "Loading waveform…"
 	var pyramid: WaveformPyramid = await loader.load_pyramid(path)
 	if pyramid == null:
 		status_label.text = "Could not load audio: " + loader.last_error
 		return
+	var stream := WaveformBaker.load_audio_stream(path)
+	if stream == null:
+		status_label.text = "Could not open audio stream: " + path.get_file()
+		return
 	waveform.pyramid = pyramid
 	minimap.pyramid = pyramid
-	var stream := WaveformBaker.load_audio_stream(path)
-	if stream != null:
-		player.stream = stream
-		duration = stream.get_length()
-		player.pitch_scale = playback_speed
-	else:
-		duration = pyramid.duration
+	file_path = path
+	audio_loaded = true
+	player.stream = stream
+	duration = stream.get_length()
+	player.pitch_scale = playback_speed
 	status_label.text = "%s · %.2fs · waveform %s" % [path.get_file(), duration, loader.last_source]
 	if audio_file_label != null:
 		audio_file_label.text = path.get_file()
@@ -1192,6 +1260,9 @@ func _on_initial_bpm_changed(value: float) -> void:
 		bpm_graph.queue_redraw()
 	if bpm_label != null:
 		bpm_label.text = "BPM  %.2f" % bpm
+	if wave_overlay != null:
+		wave_overlay.bar_seconds = _bar_seconds()
+		wave_overlay.queue_redraw()
 	_record_history()
 
 
@@ -1246,6 +1317,10 @@ func _seek_ratio(ratio: float) -> void:
 	minimap.playback_ratio = waveform.playback_ratio
 	if time_label != null:
 		time_label.text = "%s  /  %s" % [_format_time(song_time), _format_time(duration)]
+	if scrub_slider != null:
+		scrub_slider.set_value_no_signal(100.0 * song_time / maxf(duration, 0.01))
+	if timeline_progress != null:
+		timeline_progress.value = 100.0 * song_time / maxf(duration, 0.01)
 	if player.stream != null:
 		var resume := playing
 		player.play(song_time)
@@ -1255,7 +1330,7 @@ func _seek_ratio(ratio: float) -> void:
 	_set_play_button()
 
 
-func _on_grid_clicked(position: Vector2) -> void:
+func _on_grid_clicked(position: Vector2, control_held: bool = false) -> void:
 	if current_tool == "Select":
 		var nearest := ""
 		var best := 0.07
@@ -1265,12 +1340,20 @@ func _on_grid_clicked(position: Vector2) -> void:
 				best = d
 				nearest = str(n.id)
 		if nearest != "":
-			selected_id = nearest
-			selected_ids = [nearest]
-			_show_properties()
-			grid.selected_id = selected_id
-			grid.selected_ids = selected_ids
-			grid.refresh()
+			if control_held:
+				if selected_ids.has(nearest):
+					selected_ids.erase(nearest)
+				else:
+					selected_ids.append(nearest)
+				selected_id = selected_ids.back() if not selected_ids.is_empty() else ""
+			else:
+				selected_id = nearest
+				selected_ids = [nearest]
+		else:
+			selected_id = ""
+			selected_ids.clear()
+		_show_properties()
+		_sync_grid()
 		return
 	if current_tool == "Marker":
 		_add_marker_at_time(song_time)
@@ -1293,7 +1376,7 @@ func _on_grid_clicked(position: Vector2) -> void:
 		brush_notes_placed = 1
 		last_brush_position = Vector2(x, y)
 		_append_note(Vector2(x, y), song_time, "Brush")
-	elif current_tool in ["Line", "Path", "Curve"] and not note_list.is_empty():
+	elif current_tool in ["Path", "Curve"] and not note_list.is_empty():
 		var start := last_placed_position
 		for i in range(1, 9):
 			var t := float(i) / 8.0
@@ -1307,10 +1390,7 @@ func _on_grid_clicked(position: Vector2) -> void:
 	else:
 		_append_note(Vector2(x, y), song_time, current_tool)
 	last_placed_position = Vector2(x, y)
-	if auto_advance:
-		song_time += _bar_seconds()
-		if player.stream != null:
-			_seek_ratio(song_time / maxf(duration, 0.01))
+	_auto_advance_playhead()
 	_refresh_object_list()
 	_show_properties()
 	_sync_grid()
@@ -1374,8 +1454,50 @@ func _append_note(
 		_record_history()
 
 
+func _auto_advance_playhead() -> void:
+	if not auto_advance:
+		return
+	song_time = minf(song_time + _bar_seconds(), maxf(duration, 0.0))
+	_seek_ratio(song_time / maxf(duration, 0.01))
+	_play_advance_cue(song_time)
+
+
+func _on_line_completed(start: Vector2, finish: Vector2) -> void:
+	var first := _snap_grid_position(start)
+	var last := _snap_grid_position(finish)
+	for index in range(9):
+		var ratio := float(index) / 8.0
+		var position := first.lerp(last, ratio)
+		var at_time := song_time + _bar_seconds() * ratio
+		_append_note(position, at_time, "Line", false)
+	_record_history()
+	last_placed_position = last
+	_auto_advance_playhead()
+	_sync_grid()
+
+
+func _snap_grid_position(position: Vector2) -> Vector2:
+	var snapped := position
+	if snap_enabled and not Input.is_key_pressed(KEY_SHIFT):
+		snapped.x = (
+			(round(snapped.x * grid.snap_x - grid.grid_offset.x - 0.5) + grid.grid_offset.x + 0.5)
+			/ float(grid.snap_x)
+		)
+		snapped.y = (
+			(round(snapped.y * grid.snap_y - grid.grid_offset.y - 0.5) + grid.grid_offset.y + 0.5)
+			/ float(grid.snap_y)
+		)
+	return Vector2(clampf(snapped.x, 0.02, 0.98), clampf(snapped.y, 0.02, 0.98))
+
+
 func _set_tool(tool: String) -> void:
 	current_tool = tool
+	if grid != null:
+		grid.active_tool = tool
+		grid.cancel_line_preview()
+	if preview_grid != null:
+		preview_grid.active_tool = tool
+		preview_grid.cancel_line_preview()
 	for name in tool_buttons:
 		var button: Button = tool_buttons[name]
 		var border := Color.WHITE if name == tool else BORDER
@@ -1704,11 +1826,12 @@ func _open_layer_settings(layer: Dictionary) -> void:
 	var dialog := AcceptDialog.new()
 	dialog.title = "Layer settings · %s" % str(layer.name)
 	dialog.dialog_text = "Choose the layer opacity. Color is changed from the swatch."
-	var slider := HSlider.new()
+	var slider := _new_slider()
 	slider.min_value = 0.1
 	slider.max_value = 1.0
 	slider.step = 0.05
 	slider.value = float(layer.opacity)
+	_set_slider_default(slider, 0.9)
 	slider.value_changed.connect(
 		func(value):
 			layer.opacity = value
@@ -1944,6 +2067,14 @@ func _issue(level: String, text: String) -> Control:
 	row.add_child(_badge(level, Color("#ec7878")))
 	row.add_child(_label(text, 11, TEXT))
 	return row
+
+
+func _new_slider() -> HSlider:
+	return SLIDER_SCRIPT.new() as HSlider
+
+
+func _set_slider_default(slider: HSlider, value: float) -> void:
+	slider.set_meta("workshop_default_value", value)
 
 
 func _button(text: String, color: Color) -> Button:

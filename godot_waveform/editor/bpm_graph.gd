@@ -199,10 +199,13 @@ func _draw() -> void:
 			continue
 		draw_circle(pos, 7.0, Color("#0c121a"))
 		draw_circle(pos, 5.0, Color("#7ce0d2"))
+		var bpm_label := (
+			str(roundi(point.y)) if is_equal_approx(point.y, round(point.y)) else "%.2f" % point.y
+		)
 		draw_string(
 			ThemeDB.fallback_font,
 			pos + Vector2(10, -7),
-			"%.2f" % point.y,
+			bpm_label,
 			HORIZONTAL_ALIGNMENT_LEFT,
 			80,
 			11,

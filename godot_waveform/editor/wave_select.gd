@@ -22,21 +22,43 @@ var start_view := 0.0
 var hit_note_id := ""
 var bar_seconds := 1.0
 var fit_only := false
+var fit_dragging := false
+var divisions_per_bar := 8
+var pan_target_start := 0.0
+var pan_target_active := false
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	set_process(true)
+	if waveform != null:
+		pan_target_start = waveform.view_start
+
+
+func _process(delta: float) -> void:
+	if fit_only:
+		return
+	if pan_target_active and waveform != null:
+		var distance := absf(waveform.view_start - pan_target_start)
+		if distance < 0.00001:
+			waveform.view_start = pan_target_start
+			pan_target_active = false
+		else:
+			var blend := 1.0 - exp(-delta * 18.0)
+			waveform.view_start = lerpf(waveform.view_start, pan_target_start, blend)
 
 
 func _gui_input(event: InputEvent) -> void:
 	if fit_only:
-		if (
-			event is InputEventMouseButton
-			and event.button_index == MOUSE_BUTTON_LEFT
-			and event.pressed
-		):
-			waveform.seek_requested.emit(clampf(event.position.x / maxf(size.x, 1.0), 0.0, 1.0))
+		if event is InputEventMouseButton:
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				fit_dragging = event.pressed
+				if event.pressed:
+					_seek_minimap_position(event.position.x)
+			accept_event()
+		elif event is InputEventMouseMotion and fit_dragging:
+			_seek_minimap_position(event.position.x)
 			accept_event()
 		return
 	if event is InputEventMouseButton:
@@ -46,6 +68,8 @@ func _gui_input(event: InputEvent) -> void:
 				left_moved = false
 				left_start_x = event.position.x
 				start_view = waveform.view_start
+				pan_target_start = waveform.view_start
+				pan_target_active = false
 				hit_note_id = _note_at_x(event.position.x)
 				accept_event()
 			else:
@@ -88,13 +112,23 @@ func _gui_input(event: InputEvent) -> void:
 		if left_dragging and absf(event.position.x - left_start_x) > 4.0:
 			left_moved = true
 			var span := 1.0 / maxf(waveform.zoom, 1.0)
-			waveform.view_start = clampf(
+			var raw_start := clampf(
 				start_view - (event.position.x - left_start_x) / maxf(size.x, 1.0) * span,
 				0.0,
 				1.0 - span
 			)
+			var bar_fraction := bar_seconds / maxf(duration, 0.001)
+			if bar_fraction > 0.0:
+				raw_start = round(raw_start / bar_fraction) * bar_fraction
+			pan_target_start = clampf(raw_start, 0.0, 1.0 - span)
+			pan_target_active = true
 			queue_redraw()
 			accept_event()
+
+
+func _seek_minimap_position(x: float) -> void:
+	if waveform != null:
+		waveform.seek_requested.emit(clampf(x / maxf(size.x, 1.0), 0.0, 1.0))
 
 
 func _note_at_x(x: float) -> String:
@@ -124,6 +158,8 @@ func _ratio(x: float) -> float:
 
 
 func _draw() -> void:
+	if fit_only:
+		return
 	if waveform != null and duration > 0.0:
 		var visible_span := 1.0 / maxf(waveform.zoom, 1.0)
 		var first_bar := floori(waveform.view_start * duration / maxf(bar_seconds, 0.001))
@@ -135,8 +171,14 @@ func _draw() -> void:
 			var bar_ratio := bar_time / duration
 			var bar_x := (bar_ratio - waveform.view_start) / visible_span * size.x
 			draw_line(Vector2(bar_x, 0), Vector2(bar_x, size.y), Color(1.0, 1.0, 1.0, 0.48), 2.0)
-			for subdivision in range(1, 4):
-				var sub_ratio := (bar_time + bar_seconds * subdivision / 4.0) / duration
+			for subdivision in range(1, maxi(divisions_per_bar, 1)):
+				var sub_ratio := (
+					(
+						bar_time
+						+ bar_seconds * float(subdivision) / float(maxi(divisions_per_bar, 1))
+					)
+					/ duration
+				)
 				var sub_x := (sub_ratio - waveform.view_start) / visible_span * size.x
 				draw_line(
 					Vector2(sub_x, size.y * 0.22),
