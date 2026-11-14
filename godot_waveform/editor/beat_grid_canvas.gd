@@ -10,12 +10,18 @@ signal shape_selected(id: String)
 signal shape_point_edit_started(id: String)
 signal shape_point_changed(id: String, point_index: int, position: Vector2)
 signal shape_point_edit_finished(id: String)
+signal selection_area_selected(from: Vector2, to: Vector2)
 
 var notes: Array[Dictionary] = []
 var shapes: Array[Dictionary] = []
 var selected_shape_id := ""
 var dragging_shape_id := ""
 var dragging_shape_point := -1
+var selection_pending := false
+var selection_area_dragging := false
+var selection_start_screen := Vector2.ZERO
+var selection_end_screen := Vector2.ZERO
+var selection_ctrl_pressed := false
 var interactive := true
 var line_preview_duration := 1.0
 var active_layer_opacity := 0.9
@@ -63,7 +69,13 @@ func _gui_input(event: InputEvent) -> void:
 		var hover := _normalized_position(event.position)
 		ghost_position = hover
 		grid_hovered.emit(hover)
-		if not dragging_shape_id.is_empty() and dragging_shape_point >= 0:
+		if selection_pending and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			selection_end_screen = event.position
+			if selection_end_screen.distance_to(selection_start_screen) >= 8.0:
+				selection_area_dragging = true
+			queue_redraw()
+			accept_event()
+		elif not dragging_shape_id.is_empty() and dragging_shape_point >= 0:
 			shape_point_changed.emit(dragging_shape_id, dragging_shape_point, hover)
 			accept_event()
 			queue_redraw()
@@ -71,7 +83,11 @@ func _gui_input(event: InputEvent) -> void:
 		if line_dragging:
 			line_preview_position = hover
 			accept_event()
-		elif interactive and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		elif (
+			interactive
+			and not selection_pending
+			and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+		):
 			grid_dragged.emit(hover)
 		if right_dragging and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			_delete_notes_along_segment(right_drag_last, event.position)
@@ -94,6 +110,27 @@ func _gui_input(event: InputEvent) -> void:
 					shape_selected.emit(hit_shape)
 					accept_event()
 					return
+				selection_pending = true
+				selection_area_dragging = false
+				selection_start_screen = event.position
+				selection_end_screen = event.position
+				selection_ctrl_pressed = event.ctrl_pressed
+				accept_event()
+				return
+			if not event.pressed and selection_pending:
+				if selection_area_dragging:
+					selection_area_selected.emit(
+						_normalized_position(selection_start_screen),
+						_normalized_position(selection_end_screen)
+					)
+				else:
+					grid_clicked.emit(
+						_normalized_position(selection_start_screen), selection_ctrl_pressed
+					)
+				selection_pending = false
+				selection_area_dragging = false
+				queue_redraw()
+				accept_event()
 			if not event.pressed and not dragging_shape_id.is_empty():
 				var finished_id := dragging_shape_id
 				dragging_shape_id = ""
@@ -408,6 +445,12 @@ func _draw() -> void:
 		ghost_color.a = 0.35
 		var point := _project(ghost)
 		draw_rect(Rect2(point - Vector2(19, 19), Vector2(38, 38)), ghost_color, false, 2.0)
+	if selection_area_dragging:
+		var box := (
+			Rect2(selection_start_screen, selection_end_screen - selection_start_screen).abs()
+		)
+		draw_rect(box, Color(0.78, 0.5, 1.0, 0.12), true)
+		draw_rect(box, Color("#d9aaff", 0.9), false, 1.5)
 	if show_cursor and cursor_position.x >= 0.0:
 		var cursor := _project(cursor_position)
 		draw_circle(cursor, 10.0, Color(0.52, 0.86, 1.0, 0.28))

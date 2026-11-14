@@ -1281,6 +1281,18 @@ func _seek_ratio(ratio: float) -> void:
 	_set_play_button()
 
 
+func _select_grid_area(from: Vector2, to: Vector2) -> void:
+	var bounds := Rect2(from, to - from).abs()
+	selected_ids.clear()
+	selected_shape_id = ""
+	for note in note_list:
+		var position := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
+		if bounds.has_point(position):
+			selected_ids.append(str(note.get("id", "")))
+	selected_id = selected_ids.back() if not selected_ids.is_empty() else ""
+	_sync_grid()
+
+
 func _on_grid_clicked(position: Vector2, control_held: bool = false) -> void:
 	if current_tool == "Select":
 		var nearest := ""
