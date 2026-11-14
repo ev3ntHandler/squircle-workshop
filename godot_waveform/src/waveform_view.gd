@@ -38,6 +38,8 @@ signal view_changed(start_ratio: float, zoom: float)
 ## Emitted after the internal texture was rebuilt (e.g. after a resize or zoom).
 signal texture_rebuilt
 
+const RESIZE_GRIP := 10.0
+
 @export_group("Look")
 ## Top color of the waveform bars.
 @export var wave_color_top: Color = Color(0.42, 0.78, 1.0)
@@ -55,6 +57,8 @@ signal texture_rebuilt
 @export var padding: int = 6
 ## Space between bars in pixels (0 draws a solid block).
 @export var bar_gap: int = 0
+## Minimum rendered waveform thickness, preserving thin peaks at low zoom.
+@export_range(1, 8, 1) var min_bar_height: int = 2
 ## Which channel(s) to draw.
 @export_enum("mix", "stereo", "left", "right") var channel_mode: String = "mix":
 	set(value):
@@ -201,10 +205,6 @@ var _render_span := 1.0         # track ratio the texture covers (view + oversca
 var _render_visible := 1.0      # track ratio the control itself covers
 var _render_view_size := Vector2.ZERO  # control size the texture was baked for
 var _shift_px := 0              # whole-pixel slide of the texture to the left
-
-## Height of the drag area at the bottom edge that resizes the control.
-const RESIZE_GRIP := 10.0
-
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -528,6 +528,7 @@ func get_render_options() -> Dictionary:
 		"supersample": clampi(render_supersample, 1, 4),
 		"padding": padding,
 		"bar_gap": bar_gap,
+		"min_bar_height": min_bar_height,
 		"background": background,
 		"background_bottom": background_bottom,
 		"wave_color_top": wave_color_top,

@@ -20,6 +20,9 @@ var shapes: Array[Dictionary] = []
 var selected_shape_id := ""
 var dragging_shape_id := ""
 var dragging_note_id := ""
+var transforming_note_id := ""
+var transform_tool := ""
+var transform_start_position := Vector2.ZERO
 var dragging_shape_point := -1
 var selection_pending := false
 var selection_area_dragging := false
@@ -32,6 +35,7 @@ var active_layer_opacity := 0.9
 var selected_id := ""
 var selected_ids: Array[String] = []
 var cursor_position := Vector2(-1.0, -1.0)
+var cursor_rotation := -PI / 2.0
 var cursor_previous_position := Vector2(-1.0, -1.0)
 var cursor_trail: Array[Dictionary] = []
 var allow_offgrid := false
@@ -47,6 +51,7 @@ var active_tool := "Pencil"
 var line_start := Vector2(-1.0, -1.0)
 var line_preview_position := Vector2(-1.0, -1.0)
 var line_dragging := false
+var line_snap_enabled := false
 var right_dragging := false
 var right_drag_last := Vector2.ZERO
 var deleted_during_drag: Dictionary = {}
@@ -56,9 +61,9 @@ var view_zoom := 1.0
 var show_grid := true
 var show_cursor := true
 var extend_grid_boundary := false
-var active_layer_color := Color("#d779fa")
+var active_layer_color := Color("#BE78F4")
 var visible_layers: Dictionary = {"Layer 1": true}
-var layer_colors: Dictionary = {"Layer 1": Color("#d779fa")}
+var layer_colors: Dictionary = {"Layer 1": Color("#BE78F4")}
 var layer_opacities: Dictionary = {"Layer 1": 0.9}
 var _last_trail_position := Vector2(-1.0, -1.0)
 
@@ -108,6 +113,13 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 	var hover := _normalized_position(event.position)
 	ghost_position = hover
 	grid_hovered.emit(hover)
+	if not transforming_note_id.is_empty() and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		note_transform_dragged.emit(
+			transforming_note_id, transform_tool, transform_start_position, hover
+		)
+		accept_event()
+		queue_redraw()
+		return
 	if not dragging_note_id.is_empty() and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		note_dragged.emit(dragging_note_id, hover)
 		accept_event()
@@ -137,10 +149,26 @@ func _handle_mouse_motion(event: InputEventMouseMotion) -> void:
 
 
 func _handle_left_mouse_button(event: InputEventMouseButton, pos: Vector2) -> void:
+	if not event.pressed and not transforming_note_id.is_empty():
+		var finished_transform_id := transforming_note_id
+		transforming_note_id = ""
+		transform_tool = ""
+		note_transform_finished.emit(finished_transform_id)
+		accept_event()
+		return
 	if not event.pressed and not dragging_note_id.is_empty():
 		var finished_note_id := dragging_note_id
 		dragging_note_id = ""
 		note_drag_finished.emit(finished_note_id)
+		accept_event()
+		return
+	if event.pressed and active_tool in ["Rotate", "Scale"]:
+		var transform_hit := _note_at_pixel(event.position)
+		if not transform_hit.is_empty():
+			transforming_note_id = transform_hit
+			transform_tool = active_tool
+			transform_start_position = pos
+			note_transform_started.emit(transform_hit, transform_tool, pos)
 		accept_event()
 		return
 	if event.pressed and active_tool == "Select":
@@ -167,6 +195,7 @@ func _handle_left_mouse_button(event: InputEventMouseButton, pos: Vector2) -> vo
 		accept_event()
 		return
 	if event.pressed and active_tool == "Line":
+		line_snap_enabled = false
 		line_start = pos
 		line_preview_position = pos
 		line_dragging = true
@@ -424,7 +453,7 @@ func _project(point: Vector2) -> Vector2:
 
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color("#0b0d11"), true)
+	draw_rect(Rect2(Vector2.ZERO, size), Color("#0F1013"), true)
 	if extend_grid_boundary:
 		var top := _project(Vector2(-1.0 / float(maxi(snap_x, 1)), -1.0 / float(maxi(snap_y, 1))))
 		var bottom := _project(
@@ -436,7 +465,7 @@ func _draw() -> void:
 	var bottom_left := _project(Vector2.DOWN)
 	var bottom_right := _project(Vector2.ONE)
 	draw_colored_polygon(
-		PackedVector2Array([top_left, top_right, bottom_right, bottom_left]), Color("#11151d")
+		PackedVector2Array([top_left, top_right, bottom_right, bottom_left]), Color("#17181D")
 	)
 	if show_grid:
 		if extend_grid_boundary:
@@ -556,7 +585,7 @@ func _draw() -> void:
 		var target := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
 		var p := _project(target)
 		var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
-		var radius := (31.0 if not is_3d_preview else 27.0) * growth
+		var radius := (39.0 if not is_3d_preview else 34.0) * growth
 		var note_rect := Rect2(p - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 		var color: Color = layer_colors.get(layer_name, active_layer_color)
 		color.a = opacity * float(layer_opacities.get(layer_name, 0.9))
@@ -597,7 +626,7 @@ func _draw() -> void:
 					continue
 				opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
 			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
-			var radius := (31.0 if not is_3d_preview else 27.0) * growth
+			var radius := (39.0 if not is_3d_preview else 34.0) * growth
 			var center := _project(sample_position)
 			var rect := Rect2(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 			var color: Color = layer_colors.get(layer_name, active_layer_color)
@@ -612,8 +641,11 @@ func _draw() -> void:
 				draw_circle(handle, 7.0, Color("#f5cf67"))
 				draw_circle(handle, 3.0, Color("#17191e"))
 	if line_start.x >= 0.0 and line_preview_position.x >= 0.0:
-		var snapped_start := _snap_preview_point(line_start)
-		var snapped_end := _snap_preview_point(line_preview_position)
+		var snapped_start := line_start
+		var snapped_end := line_preview_position
+		if line_snap_enabled:
+			snapped_start = _snap_preview_point(line_start)
+			snapped_end = _snap_preview_point(line_preview_position)
 		for preview_index in range(9):
 			var amount := float(preview_index) / 8.0
 			var preview_point := snapped_start.lerp(snapped_end, amount)
@@ -622,7 +654,7 @@ func _draw() -> void:
 			if animate_notes:
 				opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
 			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
-			var radius := (31.0 if not is_3d_preview else 27.0) * growth
+			var radius := (39.0 if not is_3d_preview else 34.0) * growth
 			var preview_center := _project(preview_point)
 			var rect := Rect2(
 				preview_center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0)
@@ -660,14 +692,26 @@ func _draw() -> void:
 			var current: Vector2 = _project(cursor_trail[index].position)
 			var age := float(cursor_trail[index].age)
 			var fade := clampf(1.0 - age / 0.24, 0.0, 1.0)
-			draw_line(previous, current, Color(0.29, 0.83, 1.0, 0.9 * fade), 5.0 * fade, true)
+			draw_line(previous, current, Color(0.75, 0.47, 0.96, 0.9 * fade), 5.0 * fade, true)
 		var cursor := _project(cursor_position)
-		draw_circle(cursor, 20.0, Color(0.2, 0.78, 1.0, 0.20))
-		draw_circle(cursor, 13.0, Color("#48d8ff"), false, 3.0, true)
-		draw_line(cursor + Vector2(-22, 0), cursor + Vector2(-8, 0), Color("#e5fbff"), 2.0, true)
-		draw_line(cursor + Vector2(8, 0), cursor + Vector2(22, 0), Color("#e5fbff"), 2.0, true)
-		draw_line(cursor + Vector2(0, -22), cursor + Vector2(0, -8), Color("#e5fbff"), 2.0, true)
-		draw_line(cursor + Vector2(0, 8), cursor + Vector2(0, 22), Color("#e5fbff"), 2.0, true)
+		var forward := Vector2.RIGHT.rotated(cursor_rotation)
+		var side := forward.orthogonal() * 7.0
+		draw_colored_polygon(
+			PackedVector2Array(
+				[
+					cursor + forward * 28.0,
+					cursor - forward * 9.0 + side,
+					cursor - forward * 9.0 - side
+				]
+			),
+			Color("#BE78F4")
+		)
+		draw_circle(cursor, 20.0, Color(0.75, 0.47, 0.96, 0.20))
+		draw_circle(cursor, 13.0, Color("#BE78F4"), false, 3.0, true)
+		draw_line(cursor + Vector2(-22, 0), cursor + Vector2(-8, 0), Color("#f5eaff"), 2.0, true)
+		draw_line(cursor + Vector2(8, 0), cursor + Vector2(22, 0), Color("#f5eaff"), 2.0, true)
+		draw_line(cursor + Vector2(0, -22), cursor + Vector2(0, -8), Color("#f5eaff"), 2.0, true)
+		draw_line(cursor + Vector2(0, 8), cursor + Vector2(0, 22), Color("#f5eaff"), 2.0, true)
 		draw_circle(cursor, 5.0, Color.WHITE)
 
 

@@ -3,6 +3,7 @@ extends Control
 
 var waveform: WaveformView
 var duration := 0.0
+var start_offset := 0.0
 var bpm_points: Array[Vector2] = []
 var divisions_per_bar := 4
 
@@ -25,45 +26,60 @@ func _draw() -> void:
 	var last_label_x := -1000.0
 	var last_bar_label_x := -1000.0
 	var total_steps := maxi(last_step - first_step + 1, 1)
-	var step_stride := maxi(ceili(float(total_steps) / maxf(size.x / 24.0, 1.0)), 1)
 	var bar_stride := maxi(divisions_per_bar, 1)
-	if step_stride > 1:
-		step_stride = ceili(float(step_stride) / float(bar_stride)) * bar_stride
-		first_step = floori(float(first_step) / float(bar_stride)) * bar_stride
-	for step_index in range(first_step, last_step + 1, step_stride):
+	var minor_stride := maxi(ceili(float(total_steps) / maxf(size.x / 5.0, 1.0)), 1)
+	var first_minor := floori(float(first_step) / float(minor_stride)) * minor_stride
+	for step_index in range(first_minor, last_step + 1, minor_stride):
+		if posmod(step_index, bar_stride) == 0:
+			continue
 		var time := _time_at_beat(float(step_index) * step_beats)
 		if time < from_time or time > to_time:
 			continue
 		var x := (time / duration - waveform.view_start) / visible_span * size.x
-		var is_bar := posmod(step_index, maxi(divisions_per_bar, 1)) == 0
-		draw_line(
-			Vector2(x, 0),
-			Vector2(x, 7 if is_bar else 4),
-			Color(0.78, 0.82, 0.9, 0.75 if is_bar else 0.35),
-			1.0
-		)
-		var label := ""
-		var bar_number := floori(float(step_index) / float(maxi(divisions_per_bar, 1))) + 1
-		if is_bar and x - last_bar_label_x >= 36.0:
-			label = str(bar_number)
-			last_bar_label_x = x
-		elif not is_bar and absf(x - last_label_x) >= 48.0:
-			var division_index := posmod(step_index, maxi(divisions_per_bar, 1)) + 1
-			label = "%d.%d" % [bar_number, division_index]
-		if not label.is_empty():
+		draw_line(Vector2(x, 0), Vector2(x, 4), Color(0.78, 0.82, 0.9, 0.35), 1.0)
+		if absf(x - last_label_x) >= 48.0:
+			var bar_number := floori(float(step_index) / float(bar_stride)) + 1
+			var division_index := posmod(step_index, bar_stride) + 1
 			draw_string(
 				ThemeDB.fallback_font,
 				Vector2(x - 24.0, size.y - 5.0),
-				label,
+				"%d.%d" % [bar_number, division_index],
 				HORIZONTAL_ALIGNMENT_CENTER,
 				48.0,
-				12 if is_bar else 10,
-				Color("#d5dbe7", 0.9 if is_bar else 0.62)
+				10,
+				Color("#d5dbe7", 0.62)
 			)
 			last_label_x = x
+	var first_bar := floori(float(first_step) / float(bar_stride))
+	var last_bar := ceili(float(last_step) / float(bar_stride))
+	var bar_count := maxi(last_bar - first_bar + 1, 1)
+	var bar_draw_stride := maxi(ceili(float(bar_count) / maxf(size.x / 12.0, 1.0)), 1)
+	var first_drawn_bar := floori(float(first_bar) / float(bar_draw_stride)) * bar_draw_stride
+	for bar_index in range(first_drawn_bar, last_bar + 1, bar_draw_stride):
+		var step_index := bar_index * bar_stride
+		var time := _time_at_beat(float(step_index) * step_beats)
+		if time < from_time or time > to_time:
+			continue
+		var x := (time / duration - waveform.view_start) / visible_span * size.x
+		draw_line(Vector2(x, 0), Vector2(x, 7), Color(0.78, 0.82, 0.9, 0.75), 1.0)
+		if x - last_bar_label_x >= 36.0:
+			draw_string(
+				ThemeDB.fallback_font,
+				Vector2(x - 24.0, size.y - 5.0),
+				str(bar_index + 1),
+				HORIZONTAL_ALIGNMENT_CENTER,
+				48.0,
+				12,
+				Color("#d5dbe7", 0.9)
+			)
+			last_bar_label_x = x
 
 
 func _beat_count_at_time(time: float) -> float:
+	return _raw_beat_count_at_time(time) - _raw_beat_count_at_time(start_offset)
+
+
+func _raw_beat_count_at_time(time: float) -> float:
 	var end_time := clampf(time, 0.0, duration)
 	var boundaries: Array[float] = [0.0, end_time]
 	for point in bpm_points:
@@ -98,13 +114,14 @@ func _bpm_at_time(time: float) -> float:
 
 
 func _time_at_beat(target_beats: float) -> float:
-	if target_beats <= 0.0:
+	var absolute_target := target_beats + _raw_beat_count_at_time(start_offset)
+	if absolute_target <= 0.0:
 		return 0.0
 	var low := 0.0
 	var high := duration
 	for _iteration in range(24):
 		var midpoint := (low + high) * 0.5
-		if _beat_count_at_time(midpoint) < target_beats:
+		if _raw_beat_count_at_time(midpoint) < absolute_target:
 			low = midpoint
 		else:
 			high = midpoint

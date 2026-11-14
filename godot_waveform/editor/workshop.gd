@@ -6,14 +6,16 @@ const SELECT_SCRIPT := preload("res://editor/wave_select.gd")
 const SLIDER_SCRIPT := preload("res://editor/workshop_slider.gd")
 const GRID_NAV_SCRIPT := preload("res://editor/grid_navigator.gd")
 const RULER_SCRIPT := preload("res://editor/timeline_ruler.gd")
-const INK := Color("#0b0d11")
-const PANEL := Color("#12151b")
-const PANEL_ALT := Color("#181c24")
-const BORDER := Color("#292f3a")
+const INK := Color("#0f1013")
+const PANEL := Color("#0f1013")
+const PANEL_ALT := Color("#191a1f")
+const BORDER := Color("#29292e")
 const MUTED := Color("#9099aa")
 const TEXT := Color("#edf1f7")
-const ACCENT := Color("#c77dff")
-const CYAN := Color("#77d7e8")
+const ACCENT := Color("#be78f4")
+const SLIDER_PURPLE := Color("#8668cb")
+const WAVE_COLOR := Color("#29292e")
+const CYAN := Color("#be78f4")
 
 var player: AudioStreamPlayer
 var loader: WaveformLoader
@@ -24,7 +26,7 @@ var note_list: Array[Dictionary] = []
 var shape_list: Array[Dictionary] = []
 var markers: Array[Dictionary] = []
 var layers: Array[Dictionary] = [
-	{"name": "Layer 1", "color": Color("#c77dff"), "visible": true, "opacity": 0.9}
+	{"name": "Layer 1", "color": ACCENT, "visible": true, "opacity": 0.9}
 ]
 var current_layer := 0
 var history: Array[Dictionary] = []
@@ -53,12 +55,21 @@ var tree_context_menu: PopupMenu
 var tree_context_item_id := ""
 var audio_loaded := false
 var cue_player: AudioStreamPlayer
+var metronome_player: AudioStreamPlayer
+var metronome_accent_stream: AudioStreamWAV
+var metronome_regular_stream: AudioStreamWAV
 var cue_timer_remaining := 0.0
 var playing := false
 var auto_advance := false
 var autoplay_cursor := true
 var bpm_graph_open := false
 var bpm_points: Array[Vector2] = [Vector2(0, 128), Vector2(1, 128)]
+var song_start_offset := 0.0
+var metronome_enabled := false
+var metronome_last_beat := -2147483648
+var cursor_tween: Tween
+var cursor_segment_index := -2
+var cursor_last_song_time := -1.0
 var file_path := ""
 var status_label: Label
 var time_label: Label
@@ -92,6 +103,10 @@ var expanded_note_groups: Dictionary = {}
 var tree_selectable_order: Array[String] = []
 var tree_selection_anchor_id := ""
 var note_drag_moved := false
+var transform_gesture_tool := ""
+var transform_gesture_origin := Vector2.ZERO
+var transform_gesture_snapshot: Array[Dictionary] = []
+var transform_gesture_changed := false
 var selected_count_label: Label
 var played_count_label: Label
 var playback_percent_label: Label
@@ -104,6 +119,7 @@ var bpm_add_button: Button
 var bpm_graph_button: Button
 var show_grid_check: CheckBox
 var show_cursor_check: CheckBox
+var metronome_check: CheckBox
 var offgrid_check: CheckBox
 var follow_playhead_button: Button
 var waveform_ruler: TimelineRuler
@@ -146,6 +162,25 @@ func _play_advance_cue(at_time: float) -> void:
 	cue_timer_remaining = 0.18
 
 
+func _make_metronome_click(frequency: float) -> AudioStreamWAV:
+	var sample_rate := 22050
+	var click_duration := 0.045
+	var sample_count := int(sample_rate * click_duration)
+	var pcm := PackedByteArray()
+	pcm.resize(sample_count * 2)
+	for sample_index in range(sample_count):
+		var time := float(sample_index) / float(sample_rate)
+		var envelope := exp(-65.0 * time)
+		var value := sin(TAU * frequency * time) * envelope * 0.65
+		pcm.encode_s16(sample_index * 2, int(round(value * 32767.0)))
+	var click := AudioStreamWAV.new()
+	click.format = AudioStreamWAV.FORMAT_16_BITS
+	click.mix_rate = sample_rate
+	click.stereo = false
+	click.data = pcm
+	return click
+
+
 func _ready() -> void:
 	_build_theme()
 	player = AudioStreamPlayer.new()
@@ -157,6 +192,16 @@ func _ready() -> void:
 	cue_player.volume_db = -14.0
 	add_child(cue_player)
 	_setup_cue_audio()
+	metronome_player = AudioStreamPlayer.new()
+	metronome_player.name = "MetronomePlayer"
+	add_child(metronome_player)
+	metronome_accent_stream = _make_metronome_click(1320.0)
+	metronome_regular_stream = _make_metronome_click(880.0)
+	_ensure_audio_bus(music_bus_name)
+	_ensure_audio_bus(hitsound_bus_name)
+	_ensure_audio_bus(metronome_bus_name)
+	player.bus = music_bus_name
+	metronome_player.bus = metronome_bus_name
 	_build_shell()
 	_refresh_layers()
 	_sync_grid()
@@ -188,14 +233,27 @@ func _process(delta: float) -> void:
 			timeline_progress.value = 100.0 * song_time / maxf(duration, 0.01)
 		if scrub_slider != null:
 			scrub_slider.value = 100.0 * song_time / maxf(duration, 0.01)
+	if playing and metronome_enabled and song_time >= song_start_offset and wave_overlay != null:
+		var elapsed_beats := wave_overlay._beat_count_at_time(song_time, bpm_points)
+		var beat_index := floori(elapsed_beats + 0.00001)
+		if beat_index > metronome_last_beat:
+			metronome_last_beat = beat_index
+			metronome_player.stream = (
+				metronome_accent_stream if posmod(beat_index, 4) == 0 else metronome_regular_stream
+			)
+			metronome_player.play()
+	elif not playing:
+		metronome_last_beat = -2147483648
 	if waveform_ruler != null:
 		var ruler_duration := maxf(duration, 0.01)
 		if (
 			not is_equal_approx(waveform_ruler.duration, ruler_duration)
 			or waveform_ruler.bpm_points != bpm_points
+			or not is_equal_approx(waveform_ruler.start_offset, song_start_offset)
 		):
 			waveform_ruler.duration = ruler_duration
 			waveform_ruler.bpm_points = bpm_points.duplicate()
+			waveform_ruler.start_offset = song_start_offset
 			waveform_ruler.queue_redraw()
 	if wave_overlay != null:
 		wave_overlay.notes = note_list
@@ -204,6 +262,7 @@ func _process(delta: float) -> void:
 		wave_overlay.duration = maxf(duration, 0.01)
 		wave_overlay.bar_seconds = _bar_seconds()
 		wave_overlay.bpm_points = bpm_points
+		wave_overlay.start_offset = song_start_offset
 		wave_overlay.selected_ids = selected_ids
 		wave_overlay.visible_layers = grid.visible_layers
 		wave_overlay.layer_colors = grid.layer_colors
@@ -233,15 +292,15 @@ func _process(delta: float) -> void:
 		grid.selected_shape_id = selected_shape_id
 		grid.animate_notes = audio_loaded
 		grid.approach_rate = approach_rate_value
-		var target_cursor := (
-			_cursor_for_time(song_time) if playing and autoplay_cursor else Vector2(-1, -1)
-		)
-		if target_cursor.x < 0.0:
-			grid.cursor_position = target_cursor
-			grid.cursor_previous_position = target_cursor
+		if playing and autoplay_cursor and not note_list.is_empty():
+			_update_cursor_tween(song_time)
 		else:
-			grid.cursor_previous_position = grid.cursor_position
-			grid.cursor_position = target_cursor
+			if cursor_tween != null and cursor_tween.is_running():
+				cursor_tween.kill()
+			cursor_segment_index = -2
+			cursor_last_song_time = -1.0
+			grid.cursor_position = Vector2(-1, -1)
+			grid.cursor_previous_position = Vector2(-1, -1)
 		grid.refresh()
 	if preview_grid != null:
 		preview_grid.current_time = song_time
@@ -253,32 +312,70 @@ func _process(delta: float) -> void:
 		preview_grid.approach_rate = approach_rate_value
 		preview_grid.cursor_position = grid.cursor_position
 		preview_grid.cursor_previous_position = grid.cursor_previous_position
+		preview_grid.cursor_rotation = grid.cursor_rotation
 		preview_grid.refresh()
 
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
+		_handle_mouse_input(event as InputEventMouseButton)
+	elif event is InputEventKey:
+		_handle_keyboard_input(event as InputEventKey)
+
+
+func _handle_mouse_input(mouse_event: InputEventMouseButton) -> void:
+	if mouse_event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		var direction := 1.0 if mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0
 		for slider in get_tree().get_nodes_in_group("workshop_sliders"):
-			if not slider.get_global_rect().has_point(event.global_position):
-				continue
-			if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-				get_viewport().set_input_as_handled()
-				return
-			if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-				slider.value = float(slider.get_meta("workshop_default_value", slider.value))
-				get_viewport().set_input_as_handled()
-				return
-		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			var focused_control := get_viewport().gui_get_focus_owner()
 			if (
-				focused_control is LineEdit
-				and not focused_control.get_global_rect().has_point(event.global_position)
+				not is_instance_valid(slider)
+				or not slider.get_global_rect().has_point(mouse_event.global_position)
 			):
-				focused_control.release_focus()
-		return
-	if not event is InputEventKey:
-		return
-	var key := event as InputEventKey
+				continue
+			var step := float(slider.get_meta("workshop_wheel_step", 0.05))
+			slider.value = clampf(
+				slider.value + direction * step, slider.min_value, slider.max_value
+			)
+			get_viewport().set_input_as_handled()
+			return
+		for control in get_tree().get_nodes_in_group("workshop_wheel_values"):
+			if (
+				not is_instance_valid(control)
+				or not control.get_global_rect().has_point(mouse_event.global_position)
+			):
+				continue
+			if control is SpinBox:
+				var spin := control as SpinBox
+				spin.value = clampf(
+					spin.value + direction * spin.step, spin.min_value, spin.max_value
+				)
+			elif control is OptionButton:
+				var option := control as OptionButton
+				option.select(clampi(option.selected + int(direction), 0, option.item_count - 1))
+				option.item_selected.emit(option.selected)
+			get_viewport().set_input_as_handled()
+			return
+	if mouse_event.button_index == MOUSE_BUTTON_RIGHT and mouse_event.pressed:
+		for slider in get_tree().get_nodes_in_group("workshop_sliders"):
+			if (
+				not is_instance_valid(slider)
+				or not slider.get_global_rect().has_point(mouse_event.global_position)
+			):
+				continue
+			slider.value = float(slider.get_meta("workshop_default_value", slider.value))
+			get_viewport().set_input_as_handled()
+			return
+	if mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
+		var focused_control := get_viewport().gui_get_focus_owner()
+		if (
+			focused_control is LineEdit
+			and not focused_control.get_global_rect().has_point(mouse_event.global_position)
+		):
+			focused_control.release_focus()
+	return
+
+
+func _handle_keyboard_input(key: InputEventKey) -> void:
 	if not key.pressed or key.echo:
 		return
 	var focused := get_viewport().gui_get_focus_owner()
@@ -365,6 +462,7 @@ func _record_history() -> void:
 			"layers": layers.duplicate(true),
 			"bpm_points": bpm_points.duplicate(),
 			"bpm": bpm,
+			"song_start_offset": song_start_offset,
 			"current_layer": current_layer
 		}
 	)
@@ -405,6 +503,7 @@ func _restore_history(state: Dictionary) -> void:
 	for point in state.get("bpm_points", []):
 		bpm_points.append(point)
 	bpm = float(state.get("bpm", bpm))
+	song_start_offset = float(state.get("song_start_offset", song_start_offset))
 	current_layer = clampi(int(state.get("current_layer", 0)), 0, layers.size() - 1)
 	selected_id = ""
 	selected_ids.clear()
@@ -412,6 +511,7 @@ func _restore_history(state: Dictionary) -> void:
 	active_shape_id = ""
 	if bpm_graph != null:
 		bpm_graph.points = bpm_points.duplicate()
+		bpm_graph.start_offset_ratio = song_start_offset / maxf(duration, 0.01)
 		bpm_graph.queue_redraw()
 	if wave_overlay != null:
 		wave_overlay.bpm_points = bpm_points
@@ -460,6 +560,23 @@ func _on_grid_hovered(position: Vector2) -> void:
 func _build_theme() -> void:
 	var theme := Theme.new()
 	theme.default_font_size = 14
+	var slider_track := StyleBoxFlat.new()
+	slider_track.bg_color = SLIDER_PURPLE
+	slider_track.set_corner_radius_all(3)
+	slider_track.content_margin_top = 3.0
+	slider_track.content_margin_bottom = 3.0
+	var slider_fill := StyleBoxFlat.new()
+	slider_fill.bg_color = SLIDER_PURPLE
+	slider_fill.set_corner_radius_all(3)
+	slider_fill.content_margin_top = 3.0
+	slider_fill.content_margin_bottom = 3.0
+	theme.set_stylebox("slider", "HSlider", slider_track)
+	theme.set_stylebox("grabber_area", "HSlider", slider_fill)
+	theme.set_stylebox("grabber_area_highlight", "HSlider", slider_fill)
+	theme.set_icon("grabber", "HSlider", _make_slider_thumb(SLIDER_PURPLE))
+	theme.set_icon(
+		"grabber_highlight", "HSlider", _make_slider_thumb(SLIDER_PURPLE.lightened(0.12))
+	)
 	theme.set_color("font_color", "Label", TEXT)
 	theme.set_color("font_color", "Button", TEXT)
 	theme.set_color("font_hover_color", "Button", Color.WHITE)
@@ -525,15 +642,15 @@ func _build_shell() -> void:
 	_build_file_dialog()
 	file_dialog.filters = PackedStringArray(["*.mp3 ; MP3 Audio"])
 	file_dialog.use_native_dialog = false
-	_ensure_audio_bus(music_bus_name)
-	_ensure_audio_bus(hitsound_bus_name)
-	_ensure_audio_bus(metronome_bus_name)
-	player.bus = music_bus_name
 
 
 func _build_new_topbar() -> Control:
+	var topbar := PanelContainer.new()
+	topbar.custom_minimum_size.y = 48
+	topbar.add_theme_stylebox_override("panel", _style(ACCENT, 0, ACCENT))
 	var bar := HBoxContainer.new()
 	bar.custom_minimum_size.y = 48
+	topbar.add_child(bar)
 	bar.add_theme_constant_override("separation", 8)
 	var project_name := _line_edit("Untitled beatmap")
 	project_name.text = "Untitled beatmap"
@@ -555,9 +672,9 @@ func _build_new_topbar() -> Control:
 	bar.add_child(divider)
 	var home := _button("|◀", PANEL_ALT)
 	home.tooltip_text = "Go to song start"
-	home.pressed.connect(func(): _seek_ratio(0.0))
+	home.pressed.connect(func(): _seek_ratio(song_start_offset / maxf(duration, 0.01)))
 	bar.add_child(home)
-	play_button = _button("▶", ACCENT)
+	play_button = _button("▶", PANEL_ALT)
 	play_button.pressed.connect(_toggle_play)
 	bar.add_child(play_button)
 	var stop_button := _button("■", PANEL_ALT)
@@ -576,7 +693,7 @@ func _build_new_topbar() -> Control:
 	settings.tooltip_text = "Audio and editor settings"
 	settings.pressed.connect(func(): file_dialog.popup_centered_ratio(0.65))
 	bar.add_child(_pad(settings, 8, 16, 0, 0))
-	return bar
+	return topbar
 
 
 func _build_new_controls() -> Control:
@@ -593,7 +710,8 @@ func _build_new_controls() -> Control:
 	bpm_value_spin = SpinBox.new()
 	bpm_value_spin.min_value = 20.0
 	bpm_value_spin.max_value = 500.0
-	bpm_value_spin.step = 0.01
+	bpm_value_spin.step = 1.0
+	bpm_value_spin.add_to_group("workshop_wheel_values")
 	bpm_value_spin.value = bpm
 	bpm_value_spin.custom_minimum_size.x = 112
 	bpm_value_spin.value_changed.connect(_on_bpm_value_changed)
@@ -630,6 +748,7 @@ func _build_new_controls() -> Control:
 	for item in ["1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64"]:
 		beat_division_option.add_item(item)
 	beat_division_option.select(2)
+	beat_division_option.add_to_group("workshop_wheel_values")
 	beat_division_option.item_selected.connect(_on_beat_division_selected)
 	beat_group.add_child(beat_division_option)
 	row.add_child(_pad(beat_group, 8, 8, 7, 5))
@@ -641,6 +760,13 @@ func _build_new_controls() -> Control:
 	auto.toggled.connect(func(value): auto_advance = value)
 	auto_group.add_child(auto)
 	row.add_child(_pad(auto_group, 8, 8, 7, 5))
+	var metronome_group := VBoxContainer.new()
+	metronome_group.add_child(_label("METRONOME", 10, MUTED, true))
+	metronome_check = _new_check("On", false)
+	metronome_check.tooltip_text = "Play a click on each beat, with an accent every bar"
+	metronome_check.toggled.connect(_set_metronome_enabled)
+	metronome_group.add_child(metronome_check)
+	row.add_child(_pad(metronome_group, 8, 8, 7, 5))
 	var follow_group := VBoxContainer.new()
 	follow_group.add_child(_label("FOLLOW PLAYHEAD", 10, MUTED, true))
 	follow_playhead_button = _button("◎", PANEL_ALT)
@@ -672,10 +798,11 @@ func _build_new_waveforms() -> Control:
 	minimap = WaveformView.new()
 	minimap.custom_minimum_size = Vector2(120, 20)
 	minimap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	minimap.background = Color("#0d1117")
-	minimap.background_bottom = Color("#0d1117")
-	minimap.wave_color_top = Color("#8aa0c4")
-	minimap.wave_color_bottom = Color("#42516a")
+	minimap.background = INK
+	minimap.background_bottom = INK
+	minimap.wave_color_top = WAVE_COLOR
+	minimap.wave_color_bottom = WAVE_COLOR
+	minimap.rms_color = WAVE_COLOR
 	minimap.smoothing = 2
 	minimap.follow_playhead = false
 	mini_overlay = SELECT_SCRIPT.new()
@@ -689,11 +816,11 @@ func _build_new_waveforms() -> Control:
 	waveform.custom_minimum_size = Vector2(300, 78)
 	waveform.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	waveform.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	waveform.background = Color("#11151d")
-	waveform.background_bottom = Color("#141a24")
-	waveform.wave_color_top = Color("#8baeff")
-	waveform.wave_color_bottom = Color("#3b5f9c")
-	waveform.rms_color = Color("#bfd4ff", 0.7)
+	waveform.background = INK
+	waveform.background_bottom = INK
+	waveform.wave_color_top = WAVE_COLOR
+	waveform.wave_color_bottom = WAVE_COLOR
+	waveform.rms_color = WAVE_COLOR
 	waveform.smoothing = 1
 	waveform.follow_playhead = false
 	waveform.zoom_anchor = "cursor"
@@ -725,6 +852,7 @@ func _build_new_waveforms() -> Control:
 	bpm_graph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bpm_graph.visible = false
 	bpm_graph.points_changed.connect(_on_bpm_points_changed)
+	bpm_graph.start_offset_changed.connect(_on_song_start_offset_changed)
 	waveform.add_child(bpm_graph)
 	waveform.view_changed.connect(
 		func(_start, _zoom):
@@ -892,6 +1020,9 @@ func _build_center_editor() -> Control:
 	grid.note_drag_started.connect(_on_grid_note_drag_started)
 	grid.note_dragged.connect(_on_grid_note_dragged)
 	grid.note_drag_finished.connect(_on_grid_note_drag_finished)
+	grid.note_transform_started.connect(_on_note_transform_started)
+	grid.note_transform_dragged.connect(_on_note_transform_dragged)
+	grid.note_transform_finished.connect(_on_note_transform_finished)
 	grid.grid_dragged.connect(_on_grid_dragged)
 	grid.grid_hovered.connect(_on_grid_hovered)
 	grid.note_delete_requested.connect(_delete_note_by_id)
@@ -984,7 +1115,8 @@ func _build_new_footer() -> Control:
 	playback_rate_spin = SpinBox.new()
 	playback_rate_spin.min_value = 0.5
 	playback_rate_spin.max_value = 2.0
-	playback_rate_spin.step = 0.01
+	playback_rate_spin.step = 0.05
+	playback_rate_spin.add_to_group("workshop_wheel_values")
 	playback_rate_spin.value = 1.0
 	playback_rate_spin.suffix = "x"
 	playback_rate_spin.value_changed.connect(_footer_rate_changed)
@@ -994,7 +1126,7 @@ func _build_new_footer() -> Control:
 	footer.add_child(spacer)
 	music_volume_slider = _add_footer_volume(footer, "Music", 0.8, music_bus_name)
 	hitsound_volume_slider = _add_footer_volume(footer, "Hitsounds", 0.7, hitsound_bus_name)
-	metronome_volume_slider = _add_footer_volume(footer, "Metro", 0.0, metronome_bus_name)
+	metronome_volume_slider = _add_footer_volume(footer, "Metro", 0.65, metronome_bus_name)
 	var right_spacer := Control.new()
 	right_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	footer.add_child(right_spacer)
@@ -1009,6 +1141,7 @@ func _new_spin(minimum: float, maximum: float, value: float, step: float) -> Spi
 	spin.min_value = minimum
 	spin.max_value = maximum
 	spin.step = step
+	spin.add_to_group("workshop_wheel_values")
 	spin.value = value
 	spin.custom_minimum_size.x = 72
 	return spin
@@ -1055,7 +1188,7 @@ func _add_footer_volume(
 	var slider := _new_slider()
 	slider.min_value = 0.0
 	slider.max_value = 1.0
-	slider.step = 0.01
+	slider.step = 0.05
 	slider.value = initial
 	_set_slider_default(slider, initial)
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1183,6 +1316,7 @@ func _stop_track() -> void:
 	if player != null:
 		player.stop()
 	playing = false
+	metronome_last_beat = -2147483648
 	song_time = 0.0
 	if waveform != null:
 		waveform.playback_ratio = 0.0
@@ -1209,6 +1343,17 @@ func _footer_rate_changed(value: float) -> void:
 		player.pitch_scale = value
 	if speed_value_label != null:
 		speed_value_label.text = "%.2fx" % value
+
+
+func _set_metronome_enabled(enabled: bool) -> void:
+	metronome_enabled = enabled
+	_reset_metronome_phase()
+
+
+func _reset_metronome_phase() -> void:
+	metronome_last_beat = -2147483648
+	if metronome_enabled and playing and song_time >= song_start_offset and wave_overlay != null:
+		metronome_last_beat = floori(wave_overlay._beat_count_at_time(song_time, bpm_points))
 
 
 func _set_bus_volume(bus_name: String, linear_value: float) -> void:
@@ -1286,6 +1431,10 @@ func _load_audio(path: String) -> void:
 	audio_loaded = true
 	player.stream = stream
 	duration = stream.get_length()
+	song_start_offset = 0.0
+	if bpm_graph != null:
+		bpm_graph.start_offset_ratio = 0.0
+		bpm_graph.queue_redraw()
 	player.pitch_scale = playback_speed
 	if status_label != null:
 		status_label.text = (
@@ -1296,7 +1445,7 @@ func _load_audio(path: String) -> void:
 func _toggle_play() -> void:
 	if player.stream == null:
 		return
-	if player.playing:
+	if player.playing and not player.stream_paused:
 		player.stream_paused = true
 		playing = false
 	else:
@@ -1305,6 +1454,7 @@ func _toggle_play() -> void:
 		else:
 			player.play(song_time)
 		playing = true
+		_reset_metronome_phase()
 	_set_play_button()
 
 
@@ -1365,6 +1515,8 @@ func _select_grid_area(from: Vector2, to: Vector2) -> void:
 
 
 func _on_grid_clicked(position: Vector2, control_held: bool = false) -> void:
+	if current_tool in ["Rotate", "Scale"]:
+		return
 	if current_tool == "Select":
 		var nearest := ""
 		var best := 0.10
@@ -1531,6 +1683,89 @@ func _on_grid_note_drag_finished(_note_id: String) -> void:
 	_sync_grid()
 
 
+func _on_note_transform_started(note_id: String, tool: String, position: Vector2) -> void:
+	if not selected_ids.has(note_id):
+		selected_id = note_id
+		selected_ids = [note_id]
+		selected_shape_id = ""
+		_show_properties()
+		_sync_grid()
+	transform_gesture_tool = tool
+	transform_gesture_origin = position
+	transform_gesture_snapshot.clear()
+	transform_gesture_changed = false
+	for note in note_list:
+		if selected_ids.has(str(note.get("id", ""))):
+			transform_gesture_snapshot.append(
+				{"id": str(note.get("id", "")), "position": Vector2(note.x, note.y)}
+			)
+
+
+func _on_note_transform_dragged(
+	_note_id: String, tool: String, start_position: Vector2, position: Vector2
+) -> void:
+	if transform_gesture_snapshot.is_empty() or transform_gesture_tool != tool:
+		return
+	var center := Vector2(0.5, 0.5)
+	var start_vector := start_position - center
+	var current_vector := position - center
+	var angle_delta := 0.0
+	var scale_factor := 1.0
+	if tool == "Rotate":
+		if start_vector.length_squared() > 0.0004 and current_vector.length_squared() > 0.0004:
+			angle_delta = start_vector.angle_to(current_vector)
+	else:
+		scale_factor = clampf(current_vector.length() / maxf(start_vector.length(), 0.04), 0.1, 4.0)
+	var min_x := -1.0 / float(maxi(grid.snap_x, 1)) if grid.extend_grid_boundary else 0.0
+	var max_x := 1.0 + 1.0 / float(maxi(grid.snap_x, 1)) if grid.extend_grid_boundary else 1.0
+	var min_y := -1.0 / float(maxi(grid.snap_y, 1)) if grid.extend_grid_boundary else 0.0
+	var max_y := 1.0 + 1.0 / float(maxi(grid.snap_y, 1)) if grid.extend_grid_boundary else 1.0
+	var updates: Array[Dictionary] = []
+	for snapshot in transform_gesture_snapshot:
+		var original: Vector2 = snapshot.position
+		var transformed := original - center
+		if tool == "Rotate":
+			transformed = transformed.rotated(angle_delta)
+		else:
+			transformed *= scale_factor
+		transformed += center
+		transformed.x = clampf(transformed.x, min_x, max_x)
+		transformed.y = clampf(transformed.y, min_y, max_y)
+		for note in note_list:
+			if str(note.get("id", "")) != str(snapshot.id):
+				continue
+			if (
+				not is_equal_approx(float(note.x), transformed.x)
+				or not is_equal_approx(float(note.y), transformed.y)
+			):
+				updates.append({"id": str(snapshot.id), "position": transformed})
+			break
+	if updates.is_empty():
+		return
+	if not transform_gesture_changed:
+		_record_history()
+		transform_gesture_changed = true
+	for update in updates:
+		for note in note_list:
+			if str(note.get("id", "")) != str(update.id):
+				continue
+			note.x = update.position.x
+			note.y = update.position.y
+			break
+	grid.refresh()
+	if wave_overlay != null:
+		wave_overlay.queue_redraw()
+
+
+func _on_note_transform_finished(_note_id: String) -> void:
+	if transform_gesture_changed:
+		_record_history()
+	transform_gesture_tool = ""
+	transform_gesture_snapshot.clear()
+	transform_gesture_changed = false
+	_sync_grid()
+
+
 func _on_grid_dragged(position: Vector2) -> void:
 	if current_tool != "Brush":
 		return
@@ -1618,12 +1853,12 @@ func _on_line_completed(start: Vector2, finish: Vector2) -> void:
 		{
 			"id": shape_id,
 			"type": "Line",
-			"points": [_snap_grid_position(start), _snap_grid_position(finish)],
+			"points": [start, finish],
 			"time": song_time,
 			"duration": _bar_seconds(),
 			"beat_division": _selected_beat_division(),
 			"grid_division": maxi(grid.snap_x, grid.snap_y),
-			"snap_to_grid": true,
+			"snap_to_grid": false,
 			"name": "",
 			"layer": str(layers[current_layer].name)
 		}
@@ -1633,7 +1868,7 @@ func _on_line_completed(start: Vector2, finish: Vector2) -> void:
 	selected_shape_id = shape_id
 	active_shape_id = ""
 	_record_history()
-	last_placed_position = _snap_grid_position(finish)
+	last_placed_position = finish
 	_auto_advance_playhead()
 	_sync_grid()
 
@@ -1686,7 +1921,9 @@ func _on_shape_point_changed(shape_id: String, point_index: int, position: Vecto
 			continue
 		var points: Array = shape.get("points", [])
 		if point_index >= 0 and point_index < points.size():
-			points[point_index] = _snap_grid_position(position)
+			points[point_index] = _snap_grid_position(
+				position, bool(shape.get("snap_to_grid", true))
+			)
 			shape.points = points
 		break
 	if grid != null:
@@ -1705,9 +1942,9 @@ func _on_shape_point_edit_finished(_shape_id: String) -> void:
 	_sync_grid()
 
 
-func _snap_grid_position(position: Vector2) -> Vector2:
+func _snap_grid_position(position: Vector2, use_snap: bool = true) -> Vector2:
 	var snapped := position
-	if snap_enabled and not Input.is_key_pressed(KEY_SHIFT):
+	if use_snap and snap_enabled and not Input.is_key_pressed(KEY_SHIFT):
 		snapped.x = (
 			(round(snapped.x * grid.snap_x - grid.grid_offset.x - 0.5) + grid.grid_offset.x + 0.5)
 			/ float(grid.snap_x)
@@ -1761,6 +1998,24 @@ func _on_bpm_points_changed(points: Array) -> void:
 		_update_bpm_display()
 		_toast("BPM automation · %.2f BPM at start" % bpm)
 	_record_history()
+
+
+func _on_song_start_offset_changed(ratio: float) -> void:
+	song_start_offset = clampf(ratio, 0.0, 1.0) * maxf(duration, 0.0)
+	for note in note_list:
+		note.bar = _time_to_bar(float(note.get("time", 0.0)))
+	if bpm_graph != null:
+		bpm_graph.start_offset_ratio = clampf(ratio, 0.0, 1.0)
+		bpm_graph.queue_redraw()
+	if wave_overlay != null:
+		wave_overlay.start_offset = song_start_offset
+		wave_overlay.queue_redraw()
+	if waveform_ruler != null:
+		waveform_ruler.start_offset = song_start_offset
+		waveform_ruler.queue_redraw()
+	_sync_grid()
+	_record_history()
+	_toast("Song start offset · %s" % _format_time(song_start_offset))
 
 
 func _on_wave_region_selected(from_ratio: float, to_ratio: float) -> void:
@@ -2200,6 +2455,7 @@ func _show_properties() -> void:
 		for beat_value in beat_values:
 			beat_option.add_item("1/%d" % beat_value)
 		beat_option.select(maxi(selected_beat_index, 0))
+		beat_option.add_to_group("workshop_wheel_values")
 		beat_option.item_selected.connect(
 			func(index): _set_shape_property(shape, "beat_division", beat_values[index])
 		)
@@ -2351,6 +2607,7 @@ func _show_properties() -> void:
 	angle.min_value = -360.0
 	angle.max_value = 360.0
 	angle.value = 15.0
+	angle.add_to_group("workshop_wheel_values")
 	angle.prefix = "Rotate ° "
 	angle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rotate_row.add_child(angle)
@@ -2364,6 +2621,7 @@ func _show_properties() -> void:
 	scale_input.min_value = 0.1
 	scale_input.max_value = 4.0
 	scale_input.step = 0.1
+	scale_input.add_to_group("workshop_wheel_values")
 	scale_input.value = 1.1
 	scale_input.prefix = "Scale × "
 	scale_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2664,6 +2922,7 @@ func _sync_grid() -> void:
 			preview_grid.layer_opacities[layer.name] = layer.opacity
 		preview_grid.cursor_position = grid.cursor_position
 		preview_grid.cursor_previous_position = grid.cursor_previous_position
+		preview_grid.cursor_rotation = grid.cursor_rotation
 		preview_grid.refresh()
 	_refresh_object_list()
 	_show_properties()
@@ -2771,8 +3030,53 @@ func _cursor_for_time(time: float) -> Vector2:
 	return Vector2(float(last.get("x", 0.5)), float(last.get("y", 0.5)))
 
 
+func _cursor_segment_for_time(time: float, ordered: Array[Dictionary]) -> int:
+	if ordered.is_empty():
+		return -1
+	for index in range(ordered.size()):
+		if time <= float(ordered[index].get("time", 0.0)):
+			return index
+	return ordered.size() - 1
+
+
+func _update_cursor_tween(time: float) -> void:
+	var ordered := _ordered_notes()
+	if ordered.is_empty():
+		return
+	var segment_index := _cursor_segment_for_time(time, ordered)
+	var jumped := cursor_last_song_time >= 0.0 and absf(time - cursor_last_song_time) > 0.25
+	if segment_index != cursor_segment_index or jumped:
+		if cursor_tween != null and cursor_tween.is_running():
+			cursor_tween.kill()
+		if grid.cursor_position.x < 0.0 or jumped:
+			grid.cursor_position = _cursor_for_time(time)
+		grid.cursor_previous_position = grid.cursor_position
+		cursor_segment_index = segment_index
+		if segment_index > 0 and time < float(ordered[segment_index].get("time", time)):
+			var destination_note: Dictionary = ordered[segment_index]
+			var destination := Vector2(
+				float(destination_note.get("x", 0.5)), float(destination_note.get("y", 0.5))
+			)
+			var destination_time := float(destination_note.get("time", time))
+			var tween_seconds := maxf((destination_time - time) / maxf(playback_speed, 0.01), 0.03)
+			var direction := destination - grid.cursor_position
+			if direction.length_squared() > 0.0001:
+				var target_angle := direction.angle()
+				var angle_delta := wrapf(target_angle - grid.cursor_rotation, -PI, PI)
+				cursor_tween = create_tween()
+				cursor_tween.set_parallel(true)
+				cursor_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+				cursor_tween.tween_property(grid, "cursor_position", destination, tween_seconds)
+				cursor_tween.tween_property(
+					grid, "cursor_rotation", grid.cursor_rotation + angle_delta, tween_seconds
+				)
+		else:
+			grid.cursor_position = _cursor_for_time(time)
+	cursor_last_song_time = time
+
+
 func _time_to_bar(time: float) -> float:
-	return time / maxf(_bar_seconds(), 0.001) + 1.0
+	return (time - song_start_offset) / maxf(_bar_seconds(), 0.001) + 1.0
 
 
 func _bar_seconds() -> float:
@@ -2789,6 +3093,7 @@ func _property_spin(
 	spin.min_value = minimum
 	spin.max_value = maximum
 	spin.step = step
+	spin.add_to_group("workshop_wheel_values")
 	spin.value = value
 	spin.value_changed.connect(callback)
 	box.add_child(spin)
@@ -2811,9 +3116,20 @@ func _section_title(title: String, kicker: String) -> Control:
 	return col
 
 
+func _make_slider_thumb(color: Color) -> Texture2D:
+	var image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	for y in range(16):
+		for x in range(16):
+			if Vector2(float(x) - 7.5, float(y) - 7.5).length() <= 7.0:
+				image.set_pixel(x, y, color)
+	return ImageTexture.create_from_image(image)
+
+
 func _new_slider() -> HSlider:
 	var slider := SLIDER_SCRIPT.new() as HSlider
 	slider.add_to_group("workshop_sliders")
+	slider.set_meta("workshop_wheel_step", 0.05)
 	return slider
 
 

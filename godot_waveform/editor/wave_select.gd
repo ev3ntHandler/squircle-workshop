@@ -10,6 +10,7 @@ var notes: Array[Dictionary] = []
 var shapes: Array[Dictionary] = []
 var markers: Array[Dictionary] = []
 var duration := 1.0
+var start_offset := 0.0
 var selected_ids: Array[String] = []
 var visible_layers: Dictionary = {}
 var layer_colors: Dictionary = {}
@@ -183,6 +184,10 @@ func _bpm_at_time(time: float, points: Array[Vector2]) -> float:
 
 
 func _beat_count_at_time(time: float, points: Array[Vector2]) -> float:
+	return _raw_beat_count_at_time(time, points) - _raw_beat_count_at_time(start_offset, points)
+
+
+func _raw_beat_count_at_time(time: float, points: Array[Vector2]) -> float:
 	var end_time := clampf(time, 0.0, duration)
 	var boundaries: Array[float] = [0.0, end_time]
 	for point in points:
@@ -202,13 +207,14 @@ func _beat_count_at_time(time: float, points: Array[Vector2]) -> float:
 
 
 func _time_at_beat(target_beats: float, points: Array[Vector2]) -> float:
-	if target_beats <= 0.0:
+	var absolute_target := target_beats + _raw_beat_count_at_time(start_offset, points)
+	if absolute_target <= 0.0:
 		return 0.0
 	var low := 0.0
 	var high := duration
 	for _iteration in range(22):
 		var midpoint := (low + high) * 0.5
-		if _beat_count_at_time(midpoint, points) < target_beats:
+		if _raw_beat_count_at_time(midpoint, points) < absolute_target:
 			low = midpoint
 		else:
 			high = midpoint
@@ -303,20 +309,30 @@ func _draw() -> void:
 		var first_step := floori(_beat_count_at_time(visible_start, tempo_points) / step_beats)
 		var last_step := ceili(_beat_count_at_time(visible_end, tempo_points) / step_beats)
 		var total_steps := maxi(last_step - first_step + 1, 1)
-		var step_stride := maxi(ceili(float(total_steps) / maxf(size.x / 40.0, 1.0)), 1)
 		var bar_stride := maxi(divisions_per_bar, 1)
-		if step_stride > 1:
-			step_stride = ceili(float(step_stride) / float(bar_stride)) * bar_stride
-			first_step = floori(float(first_step) / float(bar_stride)) * bar_stride
-		for step_index in range(first_step, last_step + 1, step_stride):
+		var minor_stride := maxi(ceili(float(total_steps) / maxf(size.x / 5.0, 1.0)), 1)
+		var first_minor := floori(float(first_step) / float(minor_stride)) * minor_stride
+		for step_index in range(first_minor, last_step + 1, minor_stride):
+			if posmod(step_index, bar_stride) == 0:
+				continue
 			var time := _time_at_beat(float(step_index) * step_beats, tempo_points)
 			if time < visible_start or time > visible_end:
 				continue
 			var x := (time / duration - waveform.view_start) / visible_span * size.x
-			var is_bar := step_index % maxi(divisions_per_bar, 1) == 0
-			var y_start := size.y * (0.5 if is_bar else 0.75)
-			var color := Color(1.0, 1.0, 1.0, 0.48) if is_bar else Color(0.82, 0.88, 1.0, 0.22)
-			draw_line(Vector2(x, y_start), Vector2(x, size.y), color, 2.0 if is_bar else 1.0)
+			draw_line(
+				Vector2(x, size.y * 0.75), Vector2(x, size.y), Color(0.82, 0.88, 1.0, 0.22), 1.0
+			)
+		var first_bar := floori(float(first_step) / float(bar_stride))
+		var last_bar := ceili(float(last_step) / float(bar_stride))
+		var bar_count := maxi(last_bar - first_bar + 1, 1)
+		var bar_draw_stride := maxi(ceili(float(bar_count) / maxf(size.x / 12.0, 1.0)), 1)
+		var first_drawn_bar := floori(float(first_bar) / float(bar_draw_stride)) * bar_draw_stride
+		for bar_index in range(first_drawn_bar, last_bar + 1, bar_draw_stride):
+			var time := _time_at_beat(float(bar_index * bar_stride) * step_beats, tempo_points)
+			if time < visible_start or time > visible_end:
+				continue
+			var x := (time / duration - waveform.view_start) / visible_span * size.x
+			draw_line(Vector2(x, size.y * 0.5), Vector2(x, size.y), Color(1.0, 1.0, 1.0, 0.48), 2.0)
 		var ordered_notes: Array[Dictionary] = []
 		for candidate in notes:
 			ordered_notes.append(candidate)
@@ -333,7 +349,7 @@ func _draw() -> void:
 			if ratio < waveform.view_start or ratio > waveform.view_start + visible_span:
 				continue
 			var x := (ratio - waveform.view_start) / visible_span * size.x
-			var layer_color: Color = layer_colors.get(layer_name, Color("#c77dff"))
+			var layer_color: Color = layer_colors.get(layer_name, Color("#BE78F4"))
 			var opacity := float(layer_opacities.get(layer_name, 0.9))
 			var selected := selected_ids.has(str(note.get("id", "")))
 			var outline := Color.WHITE if selected else layer_color
@@ -395,7 +411,7 @@ func _draw() -> void:
 			var shape_time := float(shape.get("time", 0.0))
 			var shape_duration := maxf(float(shape.get("duration", bar_seconds)), 0.001)
 			var divisions := maxi(int(shape.get("beat_division", divisions_per_bar)), 1)
-			var layer_color: Color = layer_colors.get(layer_name, Color("#c77dff"))
+			var layer_color: Color = layer_colors.get(layer_name, Color("#BE78F4"))
 			var opacity := float(layer_opacities.get(layer_name, 0.9))
 			var is_selected := selected_ids.has(str(shape.get("id", "")))
 			var label := str(shape.get("name", ""))
@@ -478,4 +494,4 @@ func _draw() -> void:
 		var left := minf(start_x, end_x)
 		var width := absf(end_x - start_x)
 		draw_rect(Rect2(left, 0, width, size.y), Color(0.75, 0.52, 1.0, 0.22), true)
-		draw_rect(Rect2(left, 0, width, size.y), Color("#c77dff"), false, 1.5)
+		draw_rect(Rect2(left, 0, width, size.y), Color("#BE78F4"), false, 1.5)

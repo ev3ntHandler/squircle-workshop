@@ -1,9 +1,11 @@
 extends Control
 
 signal points_changed(points: Array)
+signal start_offset_changed(ratio: float)
 
 var waveform: WaveformView
 var points: Array[Vector2] = [Vector2(0, 128), Vector2(1, 128)]
+var start_offset_ratio := 0.0
 var selected := -1
 var dragging := false
 var drag_moved := false
@@ -28,7 +30,8 @@ func _ready() -> void:
 	value_spin = SpinBox.new()
 	value_spin.min_value = min_bpm
 	value_spin.max_value = max_bpm
-	value_spin.step = 0.01
+	value_spin.step = 1.0
+	value_spin.add_to_group("workshop_wheel_values")
 	value_dialog.add_child(value_spin)
 	value_dialog.confirmed.connect(_apply_input_value)
 	value_spin.get_line_edit().text_submitted.connect(_submit_input_value)
@@ -37,7 +40,16 @@ func _ready() -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
+		if event.pressed:
+			var ratio := clampf(event.position.x / maxf(size.x, 1.0), 0.0, 1.0)
+			if waveform != null:
+				ratio = waveform.view_start + ratio / maxf(waveform.zoom, 1.0)
+			start_offset_ratio = clampf(ratio, 0.0, 1.0)
+			start_offset_changed.emit(start_offset_ratio)
+			queue_redraw()
+		accept_event()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			var nearest := _nearest_point(event.position)
 			pressed_existing = nearest >= 0
@@ -185,20 +197,31 @@ func _sort_points() -> void:
 
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.025, 0.035, 0.06, 0.86), true)
+	draw_rect(Rect2(Vector2.ZERO, size), Color("#0F1013"), true)
 	for i in range(1, 5):
 		var y := size.y * i / 5.0
-		draw_line(Vector2(0, y), Vector2(size.x, y), Color(0.55, 0.62, 0.77, 0.18), 1.0)
+		draw_line(Vector2(0, y), Vector2(size.x, y), Color("#29292e", 0.8), 1.0)
 	var sorted := points.duplicate()
 	sorted.sort_custom(func(a: Vector2, b: Vector2): return a.x < b.x)
 	for i in range(sorted.size() - 1):
-		draw_line(_pixel(sorted[i]), _pixel(sorted[i + 1]), Color("#7ce0d2"), 3.0)
+		draw_line(_pixel(sorted[i]), _pixel(sorted[i + 1]), Color("#BE78F4"), 3.0)
+	var offset_x := _pixel(Vector2(start_offset_ratio, max_bpm * 0.5)).x
+	draw_line(Vector2(offset_x, 0), Vector2(offset_x, size.y), Color("#BE78F4", 0.95), 2.0, true)
+	draw_string(
+		ThemeDB.fallback_font,
+		Vector2(offset_x + 5.0, size.y - 6.0),
+		"START",
+		HORIZONTAL_ALIGNMENT_LEFT,
+		48.0,
+		9,
+		Color("#BE78F4")
+	)
 	for point in sorted:
 		var pos := _pixel(point)
 		if pos.x < -20.0 or pos.x > size.x + 20.0:
 			continue
 		draw_circle(pos, 7.0, Color("#0c121a"))
-		draw_circle(pos, 5.0, Color("#7ce0d2"))
+		draw_circle(pos, 5.0, Color("#BE78F4"))
 		var bpm_label := (
 			str(roundi(point.y)) if is_equal_approx(point.y, round(point.y)) else "%.2f" % point.y
 		)
@@ -214,7 +237,7 @@ func _draw() -> void:
 	draw_string(
 		ThemeDB.fallback_font,
 		Vector2(12, 19),
-		"BPM AUTOMATION · Click to add/delete · Right click a point for input",
+		"BPM automation · Middle-click sets song start · Click to add/delete · Right-click for exact BPM",
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1,
 		10,
