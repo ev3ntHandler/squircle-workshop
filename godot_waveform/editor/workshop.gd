@@ -104,7 +104,6 @@ var bpm_add_button: Button
 var bpm_graph_button: Button
 var show_grid_check: CheckBox
 var show_cursor_check: CheckBox
-var extend_boundary_check: CheckBox
 var offgrid_check: CheckBox
 var follow_playhead_button: Button
 var waveform_ruler: TimelineRuler
@@ -835,9 +834,6 @@ func _build_object_sidebar() -> PanelContainer:
 			grid.refresh()
 	)
 	view_panel.add_child(show_cursor_check)
-	extend_boundary_check = _new_check("Extend Grid Boundary", false)
-	extend_boundary_check.toggled.connect(func(_value): _sync_grid())
-	view_panel.add_child(extend_boundary_check)
 	offgrid_check = _new_check("Allow Offgrid", false)
 	offgrid_check.tooltip_text = "Allow note positions beyond the 3×3 grid edges"
 	offgrid_check.toggled.connect(func(_value): _sync_grid())
@@ -1318,6 +1314,8 @@ func _set_play_button() -> void:
 
 
 func _seek_minimap_ratio(ratio: float) -> void:
+	if wave_overlay != null:
+		wave_overlay.cancel_pending_pan()
 	_seek_ratio(ratio)
 	if waveform == null or duration <= 0.0:
 		return
@@ -2382,11 +2380,7 @@ func _show_properties() -> void:
 func _set_shape_property(shape: Dictionary, property_name: String, value: Variant) -> void:
 	shape[property_name] = value
 	_record_history()
-	if wave_overlay != null:
-		wave_overlay.shapes = shape_list
-		wave_overlay.queue_redraw()
-	if grid != null:
-		grid.refresh()
+	_sync_grid()
 	_refresh_object_list()
 
 
@@ -2579,19 +2573,30 @@ func _duplicate_selected() -> void:
 
 func _delete_selected() -> void:
 	var remove_ids := selected_ids.duplicate()
-	if remove_ids.is_empty():
+	if not selected_id.is_empty() and not remove_ids.has(selected_id):
 		remove_ids.append(selected_id)
+	if not selected_shape_id.is_empty() and not remove_ids.has(selected_shape_id):
+		remove_ids.append(selected_shape_id)
+	if remove_ids.is_empty():
+		return
 	var did_remove := false
 	for i in range(note_list.size() - 1, -1, -1):
-		if remove_ids.has(str(note_list[i].id)):
+		if remove_ids.has(str(note_list[i].get("id", ""))):
 			note_list.remove_at(i)
+			did_remove = true
+	for i in range(shape_list.size() - 1, -1, -1):
+		if remove_ids.has(str(shape_list[i].get("id", ""))):
+			shape_list.remove_at(i)
 			did_remove = true
 	if not did_remove:
 		return
 	selected_id = ""
+	selected_shape_id = ""
 	selected_ids.clear()
+	active_shape_id = ""
 	_record_history()
 	_sync_grid()
+	_show_properties()
 
 
 func _sync_grid() -> void:
@@ -2613,10 +2618,7 @@ func _sync_grid() -> void:
 	grid.show_grid = show_grid_check.button_pressed if show_grid_check != null else true
 	grid.show_cursor = show_cursor_check.button_pressed if show_cursor_check != null else true
 	grid.allow_offgrid = offgrid_check.button_pressed if offgrid_check != null else false
-	grid.extend_grid_boundary = (
-		(extend_boundary_check.button_pressed if extend_boundary_check != null else false)
-		or grid.allow_offgrid
-	)
+	grid.extend_grid_boundary = grid.allow_offgrid
 	var main_grid_size := 340.0
 	if grid.extend_grid_boundary:
 		grid.custom_minimum_size = Vector2(

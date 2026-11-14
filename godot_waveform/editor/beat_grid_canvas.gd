@@ -310,6 +310,33 @@ func _shape_samples(shape: Dictionary) -> Array[Vector2]:
 	return result
 
 
+func _shape_position_at(points: Array, progress: float, is_curve: bool) -> Vector2:
+	if points.is_empty():
+		return Vector2.ZERO
+	if points.size() == 1:
+		return points[0]
+	var scaled := clampf(progress, 0.0, 1.0) * float(points.size() - 1)
+	var segment := mini(int(floor(scaled)), points.size() - 2)
+	var t := scaled - float(segment)
+	var p1: Vector2 = points[segment]
+	var p2: Vector2 = points[segment + 1]
+	if not is_curve:
+		return p1.lerp(p2, t)
+	var p0: Vector2 = points[maxi(segment - 1, 0)]
+	var p3: Vector2 = points[mini(segment + 2, points.size() - 1)]
+	var t2 := t * t
+	var t3 := t2 * t
+	return (
+		0.5
+		* (
+			(2.0 * p1)
+			+ (-p0 + p2) * t
+			+ (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+			+ (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
+		)
+	)
+
+
 func _snap_preview_point(point: Vector2) -> Vector2:
 	if not snap_enabled or Input.is_key_pressed(KEY_SHIFT):
 		return point
@@ -541,16 +568,28 @@ func _draw() -> void:
 			draw_rect(note_rect.grow(4), Color.WHITE, false, 2.0)
 	for shape in shapes:
 		var shape_id := str(shape.get("id", ""))
-		var samples := _shape_samples(shape)
-		if samples.is_empty():
+		var points: Array = shape.get("points", [])
+		if points.is_empty():
 			continue
 		var layer_name := str(shape.get("layer", "Layer 1"))
 		if not bool(visible_layers.get(layer_name, true)):
 			continue
 		var shape_start := float(shape.get("time", 0.0))
 		var shape_duration := maxf(float(shape.get("duration", 1.0)), 0.001)
-		for sample_index in range(samples.size()):
-			var progress := float(sample_index) / float(maxi(samples.size() - 1, 1))
+		var divisions := maxi(int(shape.get("beat_division", 4)), 1)
+		var grid_division := float(maxi(int(shape.get("grid_division", 3)), 1))
+		for sample_index in range(divisions):
+			var progress := float(sample_index) / float(divisions)
+			var sample_position := _shape_position_at(
+				points, progress, str(shape.get("type", "")) == "Curve"
+			)
+			if bool(shape.get("snap_to_grid", true)):
+				sample_position.x = (
+					(round(sample_position.x * grid_division - 0.5) + 0.5) / grid_division
+				)
+			sample_position.y = (
+				(round(sample_position.y * grid_division - 0.5) + 0.5) / grid_division
+			)
 			var arrival := shape_start + progress * shape_duration - current_time
 			var opacity := 1.0
 			if animate_notes:
@@ -559,7 +598,7 @@ func _draw() -> void:
 				opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
 			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
 			var radius := (31.0 if not is_3d_preview else 27.0) * growth
-			var center := _project(samples[sample_index])
+			var center := _project(sample_position)
 			var rect := Rect2(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 			var color: Color = layer_colors.get(layer_name, active_layer_color)
 			color.a = opacity * float(layer_opacities.get(layer_name, 0.9))

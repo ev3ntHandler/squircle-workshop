@@ -27,29 +27,16 @@ var bpm_points: Array[Vector2] = [Vector2(0.0, 128.0), Vector2(1.0, 128.0)]
 var fit_only := false
 var fit_dragging := false
 var divisions_per_bar := 8
-var pan_target_start := 0.0
-var pan_target_active := false
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	set_process(true)
-	if waveform != null:
-		pan_target_start = waveform.view_start
 
 
-func _process(delta: float) -> void:
-	if fit_only:
-		return
-	if pan_target_active and waveform != null:
-		var distance := absf(waveform.view_start - pan_target_start)
-		if distance < 0.00001:
-			waveform.view_start = pan_target_start
-			pan_target_active = false
-		else:
-			var blend := 1.0 - exp(-delta * 18.0)
-			waveform.view_start = lerpf(waveform.view_start, pan_target_start, blend)
+func cancel_pending_pan() -> void:
+	left_dragging = false
+	left_moved = false
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -71,8 +58,6 @@ func _gui_input(event: InputEvent) -> void:
 				left_moved = false
 				left_start_x = event.position.x
 				start_view = waveform.view_start
-				pan_target_start = waveform.view_start
-				pan_target_active = false
 				hit_note_id = _note_at_x(event.position.x)
 				accept_event()
 			else:
@@ -122,12 +107,13 @@ func _gui_input(event: InputEvent) -> void:
 			)
 			if duration > 0.0:
 				var tempo_points := _sorted_bpm_points()
-				var target_beats: float = (
-					round(_beat_count_at_time(raw_start * duration, tempo_points) / 4.0) * 4.0
-				)
+				var snap_beats := 4.0 / float(maxi(divisions_per_bar, 1))
+				var beat_count := _beat_count_at_time(raw_start * duration, tempo_points)
+				var target_beats := round(beat_count / snap_beats) * snap_beats
 				raw_start = _time_at_beat(target_beats, tempo_points) / duration
-			pan_target_start = clampf(raw_start, 0.0, 1.0 - span)
-			pan_target_active = true
+			var snapped_start := clampf(raw_start, 0.0, 1.0 - span)
+			if not is_equal_approx(waveform.view_start, snapped_start):
+				waveform.view_start = snapped_start
 			queue_redraw()
 			accept_event()
 
@@ -300,7 +286,13 @@ func _draw() -> void:
 			var marker_x := (
 				clampf(float(marker.get("time", 0.0)) / maxf(duration, 0.01), 0.0, 1.0) * size.x
 			)
-			draw_line(Vector2(marker_x, 0), Vector2(marker_x, size.y), Color("#ffd84a"), 2.0, true)
+			draw_line(
+				Vector2(marker_x, 0),
+				Vector2(marker_x, size.y),
+				Color(marker.get("color", Color("#e6c45e"))),
+				2.0,
+				true
+			)
 		return
 	if waveform != null and duration > 0.0:
 		var visible_span := 1.0 / maxf(waveform.zoom, 1.0)
@@ -310,7 +302,13 @@ func _draw() -> void:
 		var step_beats := 4.0 / float(maxi(divisions_per_bar, 1))
 		var first_step := floori(_beat_count_at_time(visible_start, tempo_points) / step_beats)
 		var last_step := ceili(_beat_count_at_time(visible_end, tempo_points) / step_beats)
-		for step_index in range(first_step, last_step + 1):
+		var total_steps := maxi(last_step - first_step + 1, 1)
+		var step_stride := maxi(ceili(float(total_steps) / maxf(size.x / 40.0, 1.0)), 1)
+		var bar_stride := maxi(divisions_per_bar, 1)
+		if step_stride > 1:
+			step_stride = ceili(float(step_stride) / float(bar_stride)) * bar_stride
+			first_step = floori(float(first_step) / float(bar_stride)) * bar_stride
+		for step_index in range(first_step, last_step + 1, step_stride):
 			var time := _time_at_beat(float(step_index) * step_beats, tempo_points)
 			if time < visible_start or time > visible_end:
 				continue
@@ -324,13 +322,10 @@ func _draw() -> void:
 			ordered_notes.append(candidate)
 		ordered_notes.sort_custom(
 			func(a: Dictionary, b: Dictionary):
-				var a_time := float(a.get("time", 0.0))
-				var b_time := float(b.get("time", 0.0))
-				if is_equal_approx(a_time, b_time):
-					return notes.find(a) < notes.find(b)
-				return a_time < b_time
+				return float(a.get("time", 0.0)) < float(b.get("time", 0.0))
 		)
-		for note in notes:
+		for note_index in range(ordered_notes.size()):
+			var note: Dictionary = ordered_notes[note_index]
 			var layer_name := str(note.get("layer", "Layer 1"))
 			if not bool(visible_layers.get(layer_name, true)):
 				continue
@@ -366,7 +361,10 @@ func _draw() -> void:
 					draw_rect(
 						cell, Color(layer_color.r, layer_color.g, layer_color.b, 0.48), false, 0.7
 					)
-			var note_number := ordered_notes.find(note) + 1
+			var precise_position := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
+			var precise_center := box.position + precise_position * box.size
+			draw_circle(precise_center, 2.0, Color.WHITE if selected else layer_color)
+			var note_number := note_index + 1
 			var label_color := Color.WHITE if selected else Color(0.85, 0.88, 0.94, 0.9)
 			draw_string(
 				ThemeDB.fallback_font,
@@ -384,8 +382,6 @@ func _draw() -> void:
 			func(a: Dictionary, b: Dictionary):
 				var a_time := float(a.get("time", 0.0))
 				var b_time := float(b.get("time", 0.0))
-				if is_equal_approx(a_time, b_time):
-					return shapes.find(a) < shapes.find(b)
 				return a_time < b_time
 		)
 		for shape_index in range(ordered_shapes.size()):

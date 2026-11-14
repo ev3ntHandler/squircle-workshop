@@ -24,7 +24,13 @@ func _draw() -> void:
 	var last_step := ceili(_beat_count_at_time(to_time) / step_beats)
 	var last_label_x := -1000.0
 	var last_bar_label_x := -1000.0
-	for step_index in range(first_step, last_step + 1):
+	var total_steps := maxi(last_step - first_step + 1, 1)
+	var step_stride := maxi(ceili(float(total_steps) / maxf(size.x / 24.0, 1.0)), 1)
+	var bar_stride := maxi(divisions_per_bar, 1)
+	if step_stride > 1:
+		step_stride = ceili(float(step_stride) / float(bar_stride)) * bar_stride
+		first_step = floori(float(first_step) / float(bar_stride)) * bar_stride
+	for step_index in range(first_step, last_step + 1, step_stride):
 		var time := _time_at_beat(float(step_index) * step_beats)
 		if time < from_time or time > to_time:
 			continue
@@ -47,7 +53,7 @@ func _draw() -> void:
 		if not label.is_empty():
 			draw_string(
 				ThemeDB.fallback_font,
-				Vector2(x, size.y - 5.0),
+				Vector2(x - 24.0, size.y - 5.0),
 				label,
 				HORIZONTAL_ALIGNMENT_CENTER,
 				48.0,
