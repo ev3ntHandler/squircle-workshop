@@ -1871,38 +1871,24 @@ func _show_properties() -> void:
 
 	var position_row := HBoxContainer.new()
 	position_row.add_theme_constant_override("separation", 8)
-	position_row.add_child(
-		_property_spin(
-			"X",
-			float(selected.x),
-			0.0,
-			1.0,
-			0.01,
-			func(value):
-				selected.x = value
-				_record_history()
-				if grid != null:
-					grid.refresh()
-				if wave_overlay != null:
-					wave_overlay.queue_redraw()
-		)
+	var x_control := _property_spin(
+		"X",
+		float(selected.x),
+		0.0,
+		1.0,
+		0.01,
+		Callable(self, "_on_selected_note_position_changed").bind("x", selected)
 	)
-	position_row.add_child(
-		_property_spin(
-			"Y",
-			float(selected.y),
-			0.0,
-			1.0,
-			0.01,
-			func(value):
-				selected.y = value
-				_record_history()
-				if grid != null:
-					grid.refresh()
-				if wave_overlay != null:
-					wave_overlay.queue_redraw()
-		)
+	var y_control := _property_spin(
+		"Y",
+		float(selected.y),
+		0.0,
+		1.0,
+		0.01,
+		Callable(self, "_on_selected_note_position_changed").bind("y", selected)
 	)
+	position_row.add_child(x_control)
+	position_row.add_child(y_control)
 	properties_panel.add_child(position_row)
 
 	var layer_option := OptionButton.new()
@@ -1950,6 +1936,15 @@ func _show_properties() -> void:
 	var reverse_button := _button("Reverse time", PANEL_ALT)
 	reverse_button.pressed.connect(func(): _transform_selected(0.0, 1.0, true))
 	properties_panel.add_child(reverse_button)
+
+
+func _on_selected_note_position_changed(value: float, axis: String, note: Dictionary) -> void:
+	note[axis] = value
+	_record_history()
+	if grid != null:
+		grid.refresh()
+	if wave_overlay != null:
+		wave_overlay.queue_redraw()
 
 
 func _build_bookmark_properties(item: Dictionary, kind: String) -> void:

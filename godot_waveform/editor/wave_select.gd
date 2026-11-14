@@ -304,17 +304,17 @@ func _draw() -> void:
 				10,
 				label_color
 			)
-	for marker in markers:
-		var ratio := float(marker.get("time", 0.0)) / duration
-		if ratio < waveform.view_start or ratio > waveform.view_start + visible_span:
-			continue
-		var x := (ratio - waveform.view_start) / visible_span * size.x
-		draw_line(
-			Vector2(x, 0),
-			Vector2(x, size.y),
-			Color(marker.get("color", Color("#e6c45e")), 0.9),
-			1.5
-		)
+		for marker in markers:
+			var ratio := float(marker.get("time", 0.0)) / duration
+			if ratio < waveform.view_start or ratio > waveform.view_start + visible_span:
+				continue
+			var x: float = (ratio - waveform.view_start) / visible_span * size.x
+			draw_line(
+				Vector2(x, 0),
+				Vector2(x, size.y),
+				Color(marker.get("color", Color("#e6c45e")), 0.9),
+				1.5
+			)
 	if selecting:
 		var left := minf(start_x, end_x)
 		var width := absf(end_x - start_x)
