@@ -109,7 +109,7 @@ func _gui_input(event: InputEvent) -> void:
 				var tempo_points := _sorted_bpm_points()
 				var snap_beats := 4.0 / float(maxi(divisions_per_bar, 1))
 				var beat_count := _beat_count_at_time(raw_start * duration, tempo_points)
-				var target_beats := round(beat_count / snap_beats) * snap_beats
+				var target_beats: float = float(round(beat_count / snap_beats)) * snap_beats
 				raw_start = _time_at_beat(target_beats, tempo_points) / duration
 			var snapped_start := clampf(raw_start, 0.0, 1.0 - span)
 			if not is_equal_approx(waveform.view_start, snapped_start):
