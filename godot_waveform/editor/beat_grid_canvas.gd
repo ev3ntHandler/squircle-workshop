@@ -1,5 +1,5 @@
-extends Control
 class_name BeatGridCanvas
+extends Control
 
 signal grid_clicked(position: Vector2, ctrl_pressed: bool)
 signal grid_dragged(position: Vector2)
@@ -38,6 +38,11 @@ var right_dragging := false
 var right_drag_last := Vector2.ZERO
 var deleted_during_drag: Dictionary = {}
 var grid_offset := Vector2.ZERO
+var view_center := Vector2(0.5, 0.5)
+var view_zoom := 1.0
+var show_grid := true
+var show_cursor := true
+var extend_grid_boundary := false
 var active_layer_color := Color("#d779fa")
 var visible_layers: Dictionary = {"Layer 1": true}
 var layer_colors: Dictionary = {"Layer 1": Color("#d779fa")}
@@ -204,10 +209,9 @@ func _snap_preview_point(point: Vector2) -> Vector2:
 
 
 func _normalized_position(position: Vector2) -> Vector2:
-	return Vector2(
-		clampf(position.x / maxf(size.x, 1.0), 0.0, 1.0),
-		clampf(position.y / maxf(size.y, 1.0), 0.0, 1.0)
-	)
+	var visible_point := Vector2(position.x / maxf(size.x, 1.0), position.y / maxf(size.y, 1.0))
+	var world_point := view_center + (visible_point - Vector2(0.5, 0.5)) / maxf(view_zoom, 1.0)
+	return Vector2(clampf(world_point.x, 0.0, 1.0), clampf(world_point.y, 0.0, 1.0))
 
 
 func cancel_line_preview() -> void:
@@ -241,7 +245,8 @@ func _notification(what: int) -> void:
 
 func _project(point: Vector2) -> Vector2:
 	if not is_3d_preview:
-		return point * size
+		var viewed := (point - view_center) * maxf(view_zoom, 1.0) + Vector2(0.5, 0.5)
+		return viewed * size
 	var top_left := Vector2(size.x * 0.16, size.y * 0.12)
 	var top_right := Vector2(size.x * 0.84, size.y * 0.12)
 	var bottom_left := Vector2(size.x * 0.04, size.y * 0.92)
@@ -258,22 +263,37 @@ func _draw() -> void:
 	draw_colored_polygon(
 		PackedVector2Array([top_left, top_right, bottom_right, bottom_left]), Color("#11151d")
 	)
-	for i in range(snap_x + 1):
-		var fraction := clampf(float(i) / float(snap_x) + grid_offset.x / float(snap_x), 0.0, 1.0)
-		draw_line(
-			_project(Vector2(fraction, 0)),
-			_project(Vector2(fraction, 1)),
-			Color(0.36, 0.4, 0.48, 0.55),
-			1.0
-		)
-	for i in range(snap_y + 1):
-		var fraction := clampf(float(i) / float(snap_y) + grid_offset.y / float(snap_y), 0.0, 1.0)
-		draw_line(
-			_project(Vector2(0, fraction)),
-			_project(Vector2(1, fraction)),
-			Color(0.36, 0.4, 0.48, 0.55),
-			1.0
-		)
+	if show_grid:
+		for i in range(snap_x + 1):
+			var fraction_x := clampf(
+				float(i) / float(snap_x) + grid_offset.x / float(snap_x), 0.0, 1.0
+			)
+			draw_line(
+				_project(Vector2(fraction_x, 0)),
+				_project(Vector2(fraction_x, 1)),
+				Color(0.36, 0.4, 0.48, 0.55),
+				1.0
+			)
+		for i in range(snap_y + 1):
+			var fraction_y := clampf(
+				float(i) / float(snap_y) + grid_offset.y / float(snap_y), 0.0, 1.0
+			)
+			draw_line(
+				_project(Vector2(0, fraction_y)),
+				_project(Vector2(1, fraction_y)),
+				Color(0.36, 0.4, 0.48, 0.55),
+				1.0
+			)
+	if extend_grid_boundary:
+		var extra := Color("#798499", 0.7)
+		var a := _project(Vector2(-0.12, -0.12))
+		var b := _project(Vector2(1.12, -0.12))
+		var c := _project(Vector2(1.12, 1.12))
+		var d := _project(Vector2(-0.12, 1.12))
+		draw_line(a, b, extra, 1.0)
+		draw_line(b, c, extra, 1.0)
+		draw_line(c, d, extra, 1.0)
+		draw_line(d, a, extra, 1.0)
 	if is_3d_preview:
 		draw_line(top_left, top_right, Color("#9bb5d3", 0.8), 2.0)
 		draw_line(top_right, bottom_right, Color("#9bb5d3", 0.8), 2.0)
@@ -317,7 +337,7 @@ func _draw() -> void:
 		outline.a = color.a
 		draw_rect(note_rect, outline, false, 2.0)
 		if str(note.get("id", "")) == selected_id or selected_ids.has(str(note.get("id", ""))):
-			draw_rect(note_rect.grow(4), Color("#f5cf67"), false, 2.0)
+			draw_rect(note_rect.grow(4), Color.WHITE, false, 2.0)
 	for shape in shapes:
 		var shape_id := str(shape.get("id", ""))
 		var samples := _shape_samples(shape)
@@ -388,7 +408,7 @@ func _draw() -> void:
 		ghost_color.a = 0.35
 		var point := _project(ghost)
 		draw_rect(Rect2(point - Vector2(19, 19), Vector2(38, 38)), ghost_color, false, 2.0)
-	if cursor_position.x >= 0.0:
+	if show_cursor and cursor_position.x >= 0.0:
 		var cursor := _project(cursor_position)
 		draw_circle(cursor, 10.0, Color(0.52, 0.86, 1.0, 0.28))
 		draw_circle(cursor, 4.0, Color("#a8e4ff"))

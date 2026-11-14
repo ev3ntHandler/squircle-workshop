@@ -259,7 +259,7 @@ func _draw() -> void:
 			color.a = 0.6 * float(layer_opacities.get(layer_name, 0.9))
 			draw_rect(Rect2(x - 3.0, size.y * 0.19, 6.0, size.y * 0.62), color, true)
 			if selected_ids.has(str(note.get("id", ""))):
-				draw_line(Vector2(x, 0), Vector2(x, size.y), Color("#f5cf67"), 2.0)
+				draw_line(Vector2(x, 0), Vector2(x, size.y), Color.WHITE, 2.0)
 		for marker in markers:
 			var ratio := float(marker.get("time", 0.0)) / duration
 			if ratio < waveform.view_start or ratio > waveform.view_start + visible_span:
