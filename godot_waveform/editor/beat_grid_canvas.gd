@@ -28,6 +28,7 @@ var active_layer_opacity := 0.9
 var selected_id := ""
 var selected_ids: Array[String] = []
 var cursor_position := Vector2(-1.0, -1.0)
+var cursor_previous_position := Vector2(-1.0, -1.0)
 var ghost_position := Vector2(-1.0, -1.0)
 var is_3d_preview := false
 var snap_enabled := true
@@ -247,8 +248,13 @@ func _snap_preview_point(point: Vector2) -> Vector2:
 
 func _normalized_position(position: Vector2) -> Vector2:
 	var visible_point := Vector2(position.x / maxf(size.x, 1.0), position.y / maxf(size.y, 1.0))
-	var world_point := view_center + (visible_point - Vector2(0.5, 0.5)) / maxf(view_zoom, 1.0)
-	return Vector2(clampf(world_point.x, 0.0, 1.0), clampf(world_point.y, 0.0, 1.0))
+	var grid_point := visible_point
+	if extend_grid_boundary:
+		grid_point = visible_point * 3.0 - Vector2.ONE
+	var world_point := view_center + (grid_point - Vector2(0.5, 0.5)) / maxf(view_zoom, 1.0)
+	var minimum := -1.0 if extend_grid_boundary else 0.0
+	var maximum := 2.0 if extend_grid_boundary else 1.0
+	return Vector2(clampf(world_point.x, minimum, maximum), clampf(world_point.y, minimum, maximum))
 
 
 func cancel_line_preview() -> void:
@@ -283,6 +289,8 @@ func _notification(what: int) -> void:
 func _project(point: Vector2) -> Vector2:
 	if not is_3d_preview:
 		var viewed := (point - view_center) * maxf(view_zoom, 1.0) + Vector2(0.5, 0.5)
+		if extend_grid_boundary:
+			viewed = (viewed + Vector2.ONE) / 3.0
 		return viewed * size
 	var top_left := Vector2(size.x * 0.16, size.y * 0.12)
 	var top_right := Vector2(size.x * 0.84, size.y * 0.12)
@@ -301,36 +309,53 @@ func _draw() -> void:
 		PackedVector2Array([top_left, top_right, bottom_right, bottom_left]), Color("#11151d")
 	)
 	if show_grid:
-		for i in range(snap_x + 1):
-			var fraction_x := clampf(
-				float(i) / float(snap_x) + grid_offset.x / float(snap_x), 0.0, 1.0
-			)
-			draw_line(
-				_project(Vector2(fraction_x, 0)),
-				_project(Vector2(fraction_x, 1)),
-				Color(0.36, 0.4, 0.48, 0.55),
-				1.0
-			)
-		for i in range(snap_y + 1):
-			var fraction_y := clampf(
-				float(i) / float(snap_y) + grid_offset.y / float(snap_y), 0.0, 1.0
-			)
-			draw_line(
-				_project(Vector2(0, fraction_y)),
-				_project(Vector2(1, fraction_y)),
-				Color(0.36, 0.4, 0.48, 0.55),
-				1.0
-			)
-	if extend_grid_boundary:
-		var extra := Color("#798499", 0.7)
-		var a := _project(Vector2(-0.12, -0.12))
-		var b := _project(Vector2(1.12, -0.12))
-		var c := _project(Vector2(1.12, 1.12))
-		var d := _project(Vector2(-0.12, 1.12))
-		draw_line(a, b, extra, 1.0)
-		draw_line(b, c, extra, 1.0)
-		draw_line(c, d, extra, 1.0)
-		draw_line(d, a, extra, 1.0)
+		if extend_grid_boundary:
+			for cell_y in range(3):
+				for cell_x in range(3):
+					if cell_x == 1 and cell_y == 1:
+						continue
+					var region := Rect2(_project(Vector2(cell_x - 1, cell_y - 1)), Vector2.ZERO)
+					region.size = _project(Vector2(cell_x, cell_y)) - region.position
+					draw_rect(region, Color("#080b10", 0.62), true)
+			for division_x in range(snap_x * 3 + 1):
+				var x := -1.0 + float(division_x) / float(maxi(snap_x, 1))
+				var strong_x := posmod(division_x, maxi(snap_x, 1)) == 0
+				draw_line(
+					_project(Vector2(x, -1)),
+					_project(Vector2(x, 2)),
+					Color(0.36, 0.4, 0.48, 0.72 if strong_x else 0.42),
+					1.0
+				)
+			for division_y in range(snap_y * 3 + 1):
+				var y := -1.0 + float(division_y) / float(maxi(snap_y, 1))
+				var strong_y := posmod(division_y, maxi(snap_y, 1)) == 0
+				draw_line(
+					_project(Vector2(-1, y)),
+					_project(Vector2(2, y)),
+					Color(0.36, 0.4, 0.48, 0.72 if strong_y else 0.42),
+					1.0
+				)
+		else:
+			for i in range(snap_x + 1):
+				var fraction_x := clampf(
+					float(i) / float(snap_x) + grid_offset.x / float(snap_x), 0.0, 1.0
+				)
+				draw_line(
+					_project(Vector2(fraction_x, 0)),
+					_project(Vector2(fraction_x, 1)),
+					Color(0.36, 0.4, 0.48, 0.55),
+					1.0
+				)
+			for i in range(snap_y + 1):
+				var fraction_y := clampf(
+					float(i) / float(snap_y) + grid_offset.y / float(snap_y), 0.0, 1.0
+				)
+				draw_line(
+					_project(Vector2(0, fraction_y)),
+					_project(Vector2(1, fraction_y)),
+					Color(0.36, 0.4, 0.48, 0.55),
+					1.0
+				)
 	if is_3d_preview:
 		draw_line(top_left, top_right, Color("#9bb5d3", 0.8), 2.0)
 		draw_line(top_right, bottom_right, Color("#9bb5d3", 0.8), 2.0)
@@ -453,9 +478,19 @@ func _draw() -> void:
 		draw_rect(box, Color("#d9aaff", 0.9), false, 1.5)
 	if show_cursor and cursor_position.x >= 0.0:
 		var cursor := _project(cursor_position)
-		draw_circle(cursor, 10.0, Color(0.52, 0.86, 1.0, 0.28))
-		draw_circle(cursor, 4.0, Color("#a8e4ff"))
-		draw_circle(cursor, 12.0, Color("#a8e4ff"), false, 1.0)
+		if cursor_previous_position.x >= 0.0:
+			var previous := _project(cursor_previous_position)
+			for trail_step in range(1, 5):
+				var ratio := float(trail_step) / 5.0
+				draw_circle(
+					previous.lerp(cursor, ratio),
+					lerpf(6.0, 2.0, ratio),
+					Color(0.52, 0.86, 1.0, 0.12 * (1.0 - ratio))
+				)
+			draw_line(previous, cursor, Color(0.52, 0.86, 1.0, 0.25), 2.0)
+		draw_circle(cursor, 9.0, Color(0.52, 0.86, 1.0, 0.20))
+		draw_circle(cursor, 4.0, Color("#d9f5ff"))
+		draw_circle(cursor, 10.0, Color("#a8e4ff"), false, 1.4)
 
 
 func refresh() -> void:

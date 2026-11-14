@@ -5,6 +5,7 @@ const BPM_SCRIPT := preload("res://editor/bpm_graph.gd")
 const SELECT_SCRIPT := preload("res://editor/wave_select.gd")
 const SLIDER_SCRIPT := preload("res://editor/workshop_slider.gd")
 const GRID_NAV_SCRIPT := preload("res://editor/grid_navigator.gd")
+const RULER_SCRIPT := preload("res://editor/timeline_ruler.gd")
 const INK := Color("#0b0d11")
 const PANEL := Color("#12151b")
 const PANEL_ALT := Color("#181c24")
@@ -101,6 +102,9 @@ var bpm_graph_button: Button
 var show_grid_check: CheckBox
 var show_cursor_check: CheckBox
 var extend_boundary_check: CheckBox
+var offgrid_check: CheckBox
+var follow_playhead_button: Button
+var waveform_ruler: TimelineRuler
 var grid_navigator
 var grid_area: Control
 var layers_panel: PanelContainer
@@ -182,6 +186,10 @@ func _process(delta: float) -> void:
 			timeline_progress.value = 100.0 * song_time / maxf(duration, 0.01)
 		if scrub_slider != null:
 			scrub_slider.value = 100.0 * song_time / maxf(duration, 0.01)
+	if waveform_ruler != null:
+		waveform_ruler.duration = maxf(duration, 0.01)
+		waveform_ruler.bpm_points = bpm_points
+		waveform_ruler.queue_redraw()
 	if wave_overlay != null:
 		wave_overlay.notes = note_list
 		wave_overlay.markers = markers
@@ -222,11 +230,10 @@ func _process(delta: float) -> void:
 		)
 		if target_cursor.x < 0.0:
 			grid.cursor_position = target_cursor
-		elif grid.cursor_position.x < 0.0 or cursor_smoothness_value <= 0.0:
-			grid.cursor_position = target_cursor
+			grid.cursor_previous_position = target_cursor
 		else:
-			var blend := clampf(delta * lerpf(30.0, 4.0, cursor_smoothness_value), 0.0, 1.0)
-			grid.cursor_position = grid.cursor_position.lerp(target_cursor, blend)
+			grid.cursor_previous_position = grid.cursor_position
+			grid.cursor_position = target_cursor
 		grid.refresh()
 	if preview_grid != null:
 		preview_grid.current_time = song_time
@@ -626,6 +633,19 @@ func _build_new_controls() -> Control:
 	auto.toggled.connect(func(value): auto_advance = value)
 	auto_group.add_child(auto)
 	row.add_child(_pad(auto_group, 8, 8, 7, 5))
+	var follow_group := VBoxContainer.new()
+	follow_group.add_child(_label("FOLLOW PLAYHEAD", 10, MUTED, true))
+	follow_playhead_button = _button("◎", PANEL_ALT)
+	follow_playhead_button.toggle_mode = true
+	follow_playhead_button.tooltip_text = "Keep the waveform centered on the playhead"
+	follow_playhead_button.toggled.connect(
+		func(value):
+			if waveform != null:
+				waveform.follow_playhead = value
+				waveform.follow_style = "center"
+	)
+	follow_group.add_child(follow_playhead_button)
+	row.add_child(_pad(follow_group, 8, 8, 7, 5))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(spacer)
@@ -668,6 +688,7 @@ func _build_new_waveforms() -> Control:
 	waveform.rms_color = Color("#bfd4ff", 0.7)
 	waveform.smoothing = 1
 	waveform.follow_playhead = false
+	waveform.zoom_anchor = "cursor"
 	waveform.seek_requested.connect(_seek_ratio)
 	columns.add_child(waveform)
 	wave_overlay = SELECT_SCRIPT.new()
@@ -678,6 +699,18 @@ func _build_new_waveforms() -> Control:
 	wave_overlay.note_selected.connect(_select_note_by_id)
 	wave_overlay.note_delete_requested.connect(_delete_note_by_id)
 	waveform.add_child(wave_overlay)
+	waveform_ruler = RULER_SCRIPT.new()
+	waveform_ruler.waveform = waveform
+	waveform_ruler.duration = maxf(duration, 0.01)
+	waveform_ruler.bpm_points = bpm_points
+	waveform_ruler.divisions_per_bar = 4
+	if beat_division_option != null:
+		var selected_division := int(
+			beat_division_option.get_item_text(beat_division_option.selected).split("/")[1]
+		)
+		wave_overlay.divisions_per_bar = selected_division
+		waveform_ruler.divisions_per_bar = selected_division
+	columns.add_child(waveform_ruler)
 	bpm_graph = BPM_SCRIPT.new()
 	bpm_graph.waveform = waveform
 	bpm_graph.points = bpm_points.duplicate()
@@ -796,6 +829,16 @@ func _build_object_sidebar() -> PanelContainer:
 			grid.refresh()
 	)
 	view_panel.add_child(extend_boundary_check)
+	offgrid_check = _new_check("Allow Offgrid", false)
+	offgrid_check.tooltip_text = "Place notes freely instead of snapping to grid divisions"
+	offgrid_check.toggled.connect(
+		func(value):
+			snap_enabled = not value
+			if grid != null:
+				grid.snap_enabled = snap_enabled
+				grid.refresh()
+	)
+	view_panel.add_child(offgrid_check)
 	root.add_child(_pad(view_panel, 10, 8, 8, 7))
 
 	var count_row := HBoxContainer.new()
@@ -862,9 +905,11 @@ func _build_center_editor() -> Control:
 	grid_navigator.position = Vector2(-124, 12)
 	grid_navigator.view_changed.connect(_on_grid_view_changed)
 	grid_area.add_child(grid_navigator)
-	layers_toggle = _button("LAYERS  ‹", PANEL_ALT)
+	layers_toggle = _button("L\na\ny\ne\nr", PANEL_ALT)
+	layers_toggle.custom_minimum_size = Vector2(28, 94)
+	layers_toggle.add_theme_font_size_override("font_size", 9)
 	layers_toggle.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	layers_toggle.position = Vector2(-44, -42)
+	layers_toggle.position = Vector2(-32, -104)
 	layers_toggle.pressed.connect(_toggle_layers_panel)
 	grid_area.add_child(layers_toggle)
 	layers_panel = _build_layers_panel()
@@ -1089,6 +1134,9 @@ func _on_beat_division_selected(index: int) -> void:
 	if wave_overlay != null:
 		wave_overlay.divisions_per_bar = denominator
 		wave_overlay.queue_redraw()
+	if waveform_ruler != null:
+		waveform_ruler.divisions_per_bar = denominator
+		waveform_ruler.queue_redraw()
 
 
 func _on_grid_view_changed(center: Vector2, zoom_value: float) -> void:
@@ -1362,8 +1410,10 @@ func _on_grid_clicked(position: Vector2, control_held: bool = false) -> void:
 			(round(y * grid.snap_y - grid.grid_offset.y - 0.5) + grid.grid_offset.y + 0.5)
 			/ float(grid.snap_y)
 		)
-		x = clampf(x, 0.03, 0.97)
-		y = clampf(y, 0.03, 0.97)
+		var edge_min := -0.97 if grid.extend_grid_boundary else 0.03
+		var edge_max := 1.97 if grid.extend_grid_boundary else 0.97
+		x = clampf(x, edge_min, edge_max)
+		y = clampf(y, edge_min, edge_max)
 	if current_tool == "Brush":
 		brush_notes_placed = 1
 		last_brush_position = Vector2(x, y)
@@ -1411,7 +1461,7 @@ func _on_grid_dragged(position: Vector2) -> void:
 	if snapped.distance_to(last_brush_position) < 0.08:
 		return
 	last_brush_position = snapped
-	var at_time := song_time + brush_notes_placed * _bar_seconds() / 4.0
+	var at_time := song_time + brush_notes_placed * _selected_subdivision_seconds()
 	brush_notes_placed += 1
 	_append_note(snapped, at_time, "Brush")
 	_sync_grid()
@@ -1438,10 +1488,19 @@ func _append_note(
 		_record_history()
 
 
+func _selected_subdivision_seconds() -> float:
+	var division := 4
+	if beat_division_option != null:
+		division = int(
+			beat_division_option.get_item_text(beat_division_option.selected).split("/")[1]
+		)
+	return _bar_seconds() / float(maxi(division, 1))
+
+
 func _auto_advance_playhead() -> void:
 	if not auto_advance:
 		return
-	song_time = minf(song_time + _bar_seconds(), maxf(duration, 0.0))
+	song_time = minf(song_time + _selected_subdivision_seconds(), maxf(duration, 0.0))
 	_seek_ratio(song_time / maxf(duration, 0.01))
 	_play_advance_cue(song_time)
 
@@ -1539,7 +1598,9 @@ func _snap_grid_position(position: Vector2) -> Vector2:
 			(round(snapped.y * grid.snap_y - grid.grid_offset.y - 0.5) + grid.grid_offset.y + 0.5)
 			/ float(grid.snap_y)
 		)
-	return Vector2(clampf(snapped.x, 0.02, 0.98), clampf(snapped.y, 0.02, 0.98))
+	var edge_min := -0.98 if grid.extend_grid_boundary else 0.02
+	var edge_max := 1.98 if grid.extend_grid_boundary else 0.98
+	return Vector2(clampf(snapped.x, edge_min, edge_max), clampf(snapped.y, edge_min, edge_max))
 
 
 func _set_tool(tool: String) -> void:
@@ -1636,29 +1697,27 @@ func _refresh_object_list() -> void:
 		library_list.add_child(save_button)
 		return
 	var query := search_input.text.to_lower() if search_input != null else ""
+	if not query.is_empty():
+		tree_list.add_child(_label("SEARCH RESULTS", 9, MUTED, true))
 	var show_notes := object_filter in ["All", "Notes"]
 	if show_notes:
-		var notes_by_bar: Dictionary = {}
+		var ordered_notes: Array[Dictionary] = []
 		for note in note_list:
-			var bar_number := maxi(int(floor(float(note.get("bar", 1.0)))), 1)
-			if not notes_by_bar.has(bar_number):
-				notes_by_bar[bar_number] = []
 			if (
 				query == ""
-				or ("note %d" % bar_number).contains(query)
-				or str(note.get("name", note.get("type", "Note"))).to_lower().contains(query)
+				or str(note.get("name", "Note")).to_lower().contains(query)
+				or ("note %d" % (note_list.find(note) + 1)).contains(query)
 			):
-				notes_by_bar[bar_number].append(note)
-		var bars: Array = notes_by_bar.keys()
-		bars.sort()
-		for bar_number in bars:
-			var group_key := "bar:%d" % int(bar_number)
+				ordered_notes.append(note)
+		const GROUP_SIZE := 8
+		for first_index in range(0, ordered_notes.size(), GROUP_SIZE):
+			var last_index := mini(first_index + GROUP_SIZE, ordered_notes.size())
+			var group_key := "notes:%d" % first_index
+			var first_note_number := note_list.find(ordered_notes[first_index]) + 1
+			var last_note_number := note_list.find(ordered_notes[last_index - 1]) + 1
+			var group_title := "Notes %02d–%02d" % [first_note_number, last_note_number]
 			var header := _button(
-				(
-					("▾ " if expanded_note_groups.get(group_key, true) else "▸ ")
-					+ "Bar %02d" % int(bar_number)
-				),
-				INK
+				("▾ " if expanded_note_groups.get(group_key, true) else "▸ ") + group_title, INK
 			)
 			header.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			header.pressed.connect(
@@ -1669,15 +1728,15 @@ func _refresh_object_list() -> void:
 			tree_list.add_child(header)
 			if not expanded_note_groups.get(group_key, true):
 				continue
-			for note in notes_by_bar[bar_number]:
+			for index in range(first_index, last_index):
+				var note: Dictionary = ordered_notes[index]
 				var note_id := str(note.get("id", ""))
 				var note_time := float(note.get("time", 0.0))
 				var note_number := note_list.find(note) + 1
-				var note_title := str(note.get("name", "Note %02d" % maxi(note_number, 1)))
 				_add_tree_item(
 					note_id,
 					"□",
-					note_title,
+					"Note %d" % note_number,
 					note_time,
 					ACCENT,
 					query,
@@ -1704,8 +1763,8 @@ func _refresh_object_list() -> void:
 				func(): _select_shape(shape_id)
 			)
 	if object_filter in ["All", "Markers"] and not markers.is_empty():
-		var bookmarks_header := _label("BOOKMARKS", 9, MUTED, true)
-		tree_list.add_child(bookmarks_header)
+		var markers_header := _label("MARKERS", 9, MUTED, true)
+		tree_list.add_child(markers_header)
 		for item in markers:
 			var marker_id := str(item.get("id", ""))
 			_add_tree_item(
@@ -2227,11 +2286,11 @@ func _select_layer(index: int) -> void:
 
 
 func _merge_layer() -> void:
-	if current_layer <= 0:
+	if current_layer >= layers.size() - 1:
 		_toast("There is no layer below this one to merge into.")
 		return
 	var source_name := str(layers[current_layer].name)
-	var target_name := str(layers[current_layer - 1].name)
+	var target_name := str(layers[current_layer + 1].name)
 	for note in note_list:
 		if str(note.layer) == source_name:
 			note.layer = target_name
@@ -2239,7 +2298,7 @@ func _merge_layer() -> void:
 		if str(shape.get("layer", "")) == source_name:
 			shape.layer = target_name
 	layers.remove_at(current_layer)
-	current_layer -= 1
+	current_layer = mini(current_layer, layers.size() - 1)
 	_record_history()
 	_refresh_layers()
 	_sync_grid()
@@ -2282,18 +2341,28 @@ func _place_pattern() -> void:
 
 
 func _cursor_for_time(time: float) -> Vector2:
-	var nearest: Dictionary = {}
-	var best := 999999.0
-	for n in note_list:
-		var distance := absf(float(n.time) - time)
-		if distance < best:
-			best = distance
-			nearest = n
-	return (
-		Vector2(float(nearest.get("x", 0.5)), float(nearest.get("y", 0.5)))
-		if not nearest.is_empty()
-		else Vector2(0.5, 0.5)
-	)
+	if note_list.is_empty():
+		return Vector2(0.5, 0.5)
+	var ordered := note_list.duplicate()
+	ordered.sort_custom(func(a: Dictionary, b: Dictionary): return float(a.time) < float(b.time))
+	var first: Dictionary = ordered[0]
+	if time <= float(first.time):
+		return Vector2(float(first.get("x", 0.5)), float(first.get("y", 0.5)))
+	for index in range(ordered.size() - 1):
+		var left: Dictionary = ordered[index]
+		var right: Dictionary = ordered[index + 1]
+		var left_time := float(left.get("time", 0.0))
+		var right_time := float(right.get("time", left_time))
+		if time <= right_time:
+			var left_position := Vector2(float(left.get("x", 0.5)), float(left.get("y", 0.5)))
+			var right_position := Vector2(float(right.get("x", 0.5)), float(right.get("y", 0.5)))
+			if is_equal_approx(time, right_time) or right_time <= left_time:
+				return right_position
+			return left_position.lerp(
+				right_position, clampf((time - left_time) / (right_time - left_time), 0.0, 1.0)
+			)
+	var last: Dictionary = ordered[-1]
+	return Vector2(float(last.get("x", 0.5)), float(last.get("y", 0.5)))
 
 
 func _time_to_bar(time: float) -> float:

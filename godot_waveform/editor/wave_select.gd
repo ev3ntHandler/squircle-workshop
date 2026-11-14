@@ -268,7 +268,7 @@ func _draw() -> void:
 			var outline := Color.WHITE if selected else layer_color
 			var box_size := 28.0
 			var box := Rect2(x - box_size * 0.5, size.y * 0.48 - box_size * 0.5, box_size, box_size)
-			draw_rect(box, Color(0.035, 0.04, 0.06, 0.92), true)
+			draw_rect(box, Color(0.035, 0.04, 0.06, 0.28), true)
 			draw_rect(box, outline, false, 1.5 if selected else 1.0)
 			var active_x := clampi(int(floor(float(note.get("x", 0.5)) * 3.0)), 0, 2)
 			var active_y := clampi(int(floor(float(note.get("y", 0.5)) * 3.0)), 0, 2)
@@ -290,17 +290,14 @@ func _draw() -> void:
 					draw_rect(
 						cell, Color(layer_color.r, layer_color.g, layer_color.b, 0.48), false, 0.7
 					)
-			var bar_number := (
-				int(floor(_beat_count_at_time(float(note.get("time", 0.0)), tempo_points) / 4.0))
-				+ 1
-			)
+			var note_number := notes.find(note) + 1
 			var label_color := Color.WHITE if selected else Color(0.85, 0.88, 0.94, 0.9)
 			draw_string(
 				ThemeDB.fallback_font,
-				Vector2(box.position.x, box.position.y - 2.0),
-				str(bar_number),
-				HORIZONTAL_ALIGNMENT_LEFT,
-				box_size,
+				Vector2(x - 36.0, box.position.y - 2.0),
+				"Note %d" % note_number,
+				HORIZONTAL_ALIGNMENT_CENTER,
+				72.0,
 				10,
 				label_color
 			)
