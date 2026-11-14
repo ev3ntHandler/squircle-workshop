@@ -14,6 +14,9 @@ signal shape_point_edit_started(id: String)
 signal shape_point_changed(id: String, point_index: int, position: Vector2)
 signal shape_point_edit_finished(id: String)
 signal selection_area_selected(from: Vector2, to: Vector2)
+signal note_transform_started(id: String, tool: String, position: Vector2)
+signal note_transform_dragged(id: String, tool: String, start: Vector2, finish: Vector2)
+signal note_transform_finished(id: String)
 
 var notes: Array[Dictionary] = []
 var shapes: Array[Dictionary] = []

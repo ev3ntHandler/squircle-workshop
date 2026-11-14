@@ -234,7 +234,7 @@ func _process(delta: float) -> void:
 		if scrub_slider != null:
 			scrub_slider.value = 100.0 * song_time / maxf(duration, 0.01)
 	if playing and metronome_enabled and song_time >= song_start_offset and wave_overlay != null:
-		var elapsed_beats := wave_overlay._beat_count_at_time(song_time, bpm_points)
+		var elapsed_beats: float = float(wave_overlay._beat_count_at_time(song_time, bpm_points))
 		var beat_index := floori(elapsed_beats + 0.00001)
 		if beat_index > metronome_last_beat:
 			metronome_last_beat = beat_index
