@@ -5,6 +5,7 @@ signal note_selected(id: String)
 signal note_delete_requested(id: String)
 
 var waveform: WaveformView
+var viewport_waveform: WaveformView
 var notes: Array[Dictionary] = []
 var markers: Array[Dictionary] = []
 var duration := 1.0
@@ -229,6 +230,12 @@ func _time_at_beat(target_beats: float, points: Array[Vector2]) -> float:
 
 func _draw() -> void:
 	if fit_only:
+		if viewport_waveform != null:
+			var visible_span := 1.0 / maxf(viewport_waveform.zoom, 1.0)
+			var left := viewport_waveform.view_start * size.x
+			var viewport_rect := Rect2(left, 1.0, visible_span * size.x, maxf(size.y - 2.0, 0.0))
+			draw_rect(viewport_rect, Color(0.78, 0.5, 1.0, 0.16), true)
+			draw_rect(viewport_rect, Color("#d9aaff", 0.9), false, 1.0)
 		return
 	if waveform != null and duration > 0.0:
 		var visible_span := 1.0 / maxf(waveform.zoom, 1.0)

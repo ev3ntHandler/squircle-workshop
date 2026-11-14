@@ -42,7 +42,7 @@ func _gui_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and dragging:
 		if event.position.distance_to(drag_start) > 1.0:
 			moved = true
-		var delta := (
+		var delta: Vector2 = (
 			(event.position - drag_start) / Vector2(maxf(size.x, 1.0), maxf(size.y, 1.0)) / zoom
 		)
 		center = Vector2(
