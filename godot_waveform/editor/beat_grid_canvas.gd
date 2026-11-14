@@ -365,7 +365,7 @@ func _draw() -> void:
 		var target := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
 		var p := _project(target)
 		var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
-		var radius := (25.0 if not is_3d_preview else 22.0) * growth
+		var radius := (31.0 if not is_3d_preview else 27.0) * growth
 		var note_rect := Rect2(p - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 		var color: Color = layer_colors.get(layer_name, active_layer_color)
 		color.a = opacity * float(layer_opacities.get(layer_name, 0.9))
@@ -394,7 +394,7 @@ func _draw() -> void:
 					continue
 				opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
 			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
-			var radius := (25.0 if not is_3d_preview else 22.0) * growth
+			var radius := (31.0 if not is_3d_preview else 27.0) * growth
 			var center := _project(samples[sample_index])
 			var rect := Rect2(center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
 			var color: Color = layer_colors.get(layer_name, active_layer_color)
@@ -419,7 +419,7 @@ func _draw() -> void:
 			if animate_notes:
 				opacity = clampf(1.0 - arrival / approach_window, 0.02, 1.0)
 			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
-			var radius := (25.0 if not is_3d_preview else 22.0) * growth
+			var radius := (31.0 if not is_3d_preview else 27.0) * growth
 			var preview_center := _project(preview_point)
 			var rect := Rect2(
 				preview_center - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0)

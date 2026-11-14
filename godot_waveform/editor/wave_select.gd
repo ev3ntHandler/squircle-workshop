@@ -262,22 +262,59 @@ func _draw() -> void:
 			if ratio < waveform.view_start or ratio > waveform.view_start + visible_span:
 				continue
 			var x := (ratio - waveform.view_start) / visible_span * size.x
-			var color: Color = layer_colors.get(layer_name, Color("#c77dff"))
-			color.a = 0.6 * float(layer_opacities.get(layer_name, 0.9))
-			draw_rect(Rect2(x - 3.0, size.y * 0.19, 6.0, size.y * 0.62), color, true)
-			if selected_ids.has(str(note.get("id", ""))):
-				draw_line(Vector2(x, 0), Vector2(x, size.y), Color.WHITE, 2.0)
-		for marker in markers:
-			var ratio := float(marker.get("time", 0.0)) / duration
-			if ratio < waveform.view_start or ratio > waveform.view_start + visible_span:
-				continue
-			var x := (ratio - waveform.view_start) / visible_span * size.x
-			draw_line(
-				Vector2(x, 0),
-				Vector2(x, size.y),
-				Color(marker.get("color", Color("#e6c45e")), 0.9),
-				1.5
+			var layer_color: Color = layer_colors.get(layer_name, Color("#c77dff"))
+			var opacity := float(layer_opacities.get(layer_name, 0.9))
+			var selected := selected_ids.has(str(note.get("id", "")))
+			var outline := Color.WHITE if selected else layer_color
+			var box_size := 28.0
+			var box := Rect2(x - box_size * 0.5, size.y * 0.48 - box_size * 0.5, box_size, box_size)
+			draw_rect(box, Color(0.035, 0.04, 0.06, 0.92), true)
+			draw_rect(box, outline, false, 1.5 if selected else 1.0)
+			var active_x := clampi(int(floor(float(note.get("x", 0.5)) * 3.0)), 0, 2)
+			var active_y := clampi(int(floor(float(note.get("y", 0.5)) * 3.0)), 0, 2)
+			var cell_size := box_size / 3.0
+			for cell_y in range(3):
+				for cell_x in range(3):
+					var cell := Rect2(
+						box.position + Vector2(cell_x, cell_y) * cell_size, Vector2.ONE * cell_size
+					)
+					var active_cell := cell_x == active_x and cell_y == active_y
+					var cell_color := Color(
+						layer_color.r,
+						layer_color.g,
+						layer_color.b,
+						opacity * (0.95 if active_cell else 0.34)
+					)
+					if active_cell:
+						draw_rect(cell.grow(-1.0), cell_color, true)
+					draw_rect(
+						cell, Color(layer_color.r, layer_color.g, layer_color.b, 0.48), false, 0.7
+					)
+			var bar_number := (
+				int(floor(_beat_count_at_time(float(note.get("time", 0.0)), tempo_points) / 4.0))
+				+ 1
 			)
+			var label_color := Color.WHITE if selected else Color(0.85, 0.88, 0.94, 0.9)
+			draw_string(
+				ThemeDB.fallback_font,
+				Vector2(box.position.x, box.position.y - 2.0),
+				str(bar_number),
+				HORIZONTAL_ALIGNMENT_LEFT,
+				box_size,
+				10,
+				label_color
+			)
+	for marker in markers:
+		var ratio := float(marker.get("time", 0.0)) / duration
+		if ratio < waveform.view_start or ratio > waveform.view_start + visible_span:
+			continue
+		var x := (ratio - waveform.view_start) / visible_span * size.x
+		draw_line(
+			Vector2(x, 0),
+			Vector2(x, size.y),
+			Color(marker.get("color", Color("#e6c45e")), 0.9),
+			1.5
+		)
 	if selecting:
 		var left := minf(start_x, end_x)
 		var width := absf(end_x - start_x)

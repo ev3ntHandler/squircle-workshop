@@ -47,7 +47,6 @@ var approach_rate_value := 1.0
 var cursor_smoothness_value := 0.45
 var tool_buttons: Dictionary = {}
 var waveform_panel: Control
-var auto_advance_badge: Control
 var speed_value_label: Label
 var tree_context_menu: PopupMenu
 var tree_context_item_id := ""
@@ -474,25 +473,39 @@ func _build_shell() -> void:
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
+	var layout := HBoxContainer.new()
+	layout.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layout.add_theme_constant_override("separation", 0)
+	add_child(layout)
+	object_sidebar = _build_object_sidebar()
+	object_sidebar.custom_minimum_size.x = 284
+	object_sidebar.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	layout.add_child(object_sidebar)
 	app_content = VBoxContainer.new()
-	app_content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	app_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	app_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	app_content.add_theme_constant_override("separation", 0)
-	add_child(app_content)
+	layout.add_child(app_content)
 	app_content.add_child(_build_new_topbar())
 	app_content.add_child(_build_new_controls())
-	app_content.add_child(_build_new_waveforms())
-	var editor_row := HBoxContainer.new()
-	editor_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	editor_row.add_theme_constant_override("separation", 0)
-	app_content.add_child(editor_row)
-	object_sidebar = _build_object_sidebar()
-	editor_row.add_child(object_sidebar)
+	var workspace := HBoxContainer.new()
+	workspace.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	workspace.add_theme_constant_override("separation", 0)
+	app_content.add_child(workspace)
+	var editor_column := VBoxContainer.new()
+	editor_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	editor_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	editor_column.add_theme_constant_override("separation", 0)
+	workspace.add_child(editor_column)
+	editor_column.add_child(_build_new_waveforms())
 	var center := _build_center_editor()
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	editor_row.add_child(center)
+	editor_column.add_child(center)
 	var inspector := _build_inspector()
-	editor_row.add_child(inspector)
+	inspector.custom_minimum_size.x = 330
+	inspector.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	workspace.add_child(inspector)
 	app_content.add_child(_build_new_footer())
 	_build_file_dialog()
 	file_dialog.filters = PackedStringArray(["*.mp3 ; MP3 Audio"])
@@ -507,11 +520,6 @@ func _build_new_topbar() -> Control:
 	var bar := HBoxContainer.new()
 	bar.custom_minimum_size.y = 48
 	bar.add_theme_constant_override("separation", 8)
-	var brand := HBoxContainer.new()
-	brand.custom_minimum_size.x = 276
-	brand.add_child(_label("◈", 24, ACCENT, true))
-	brand.add_child(_label("squircle workshop", 18, TEXT, true))
-	bar.add_child(_pad(brand, 16, 8, 4, 4))
 	var project_name := _line_edit("Untitled beatmap")
 	project_name.text = "Untitled beatmap"
 	project_name.custom_minimum_size.x = 220
@@ -560,9 +568,6 @@ func _build_new_controls() -> Control:
 	var row := HBoxContainer.new()
 	row.custom_minimum_size.y = 78
 	row.add_theme_constant_override("separation", 14)
-	var left_gap := Control.new()
-	left_gap.custom_minimum_size.x = 284
-	row.add_child(left_gap)
 	var bpm_group := VBoxContainer.new()
 	bpm_group.add_child(_label("BPM", 10, MUTED, true))
 	var bpm_row := HBoxContainer.new()
@@ -618,14 +623,8 @@ func _build_new_controls() -> Control:
 	var auto := CheckBox.new()
 	auto.focus_mode = Control.FOCUS_NONE
 	auto.button_pressed = false
-	auto.toggled.connect(
-		func(value):
-			auto_advance = value
-			_update_auto_advance_badge()
-	)
+	auto.toggled.connect(func(value): auto_advance = value)
 	auto_group.add_child(auto)
-	auto_advance_badge = _label("AUTO OFF", 9, MUTED, true)
-	auto_group.add_child(auto_advance_badge)
 	row.add_child(_pad(auto_group, 8, 8, 7, 5))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -642,8 +641,6 @@ func _build_new_waveforms() -> Control:
 	columns.add_theme_constant_override("separation", 1)
 	wave_panel.add_child(columns)
 	var mini_row := HBoxContainer.new()
-	var mini_label := _label("MINIMAP", 9, MUTED, true)
-	mini_row.add_child(_pad(mini_label, 10, 6, 0, 0))
 	minimap = WaveformView.new()
 	minimap.custom_minimum_size = Vector2(120, 20)
 	minimap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -690,12 +687,7 @@ func _build_new_waveforms() -> Control:
 	waveform.add_child(bpm_graph)
 	waveform.view_changed.connect(func(_start, _zoom): mini_overlay.queue_redraw())
 	mini_overlay.viewport_waveform = waveform
-	var rail := HBoxContainer.new()
-	var spacer := Control.new()
-	spacer.custom_minimum_size.x = 284
-	rail.add_child(spacer)
-	rail.add_child(wave_panel)
-	return rail
+	return wave_panel
 
 
 func _build_object_sidebar() -> PanelContainer:
@@ -703,10 +695,24 @@ func _build_object_sidebar() -> PanelContainer:
 	panel.custom_minimum_size.x = 284
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 4)
+	root.add_theme_constant_override("separation", 0)
 	panel.add_child(root)
+
+	var brand := HBoxContainer.new()
+	brand.custom_minimum_size.y = 88
+	brand.add_theme_constant_override("separation", 11)
+	var logo := PanelContainer.new()
+	logo.custom_minimum_size = Vector2(50, 50)
+	logo.add_theme_stylebox_override("panel", _style(ACCENT, 12, ACCENT))
+	logo.add_child(_label("◈", 30, Color.WHITE, true))
+	brand.add_child(_pad(logo, 15, 0, 12, 12))
+	brand.add_child(_label("squircle workshop", 18, TEXT, true))
+	root.add_child(brand)
+
 	var brand_tabs := HBoxContainer.new()
+	brand_tabs.custom_minimum_size.y = 42
 	var objects_tab := _button("Objects", PANEL_ALT)
+	objects_tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	objects_tab.pressed.connect(
 		func():
 			tree_mode = "Tree"
@@ -714,6 +720,7 @@ func _build_object_sidebar() -> PanelContainer:
 	)
 	brand_tabs.add_child(objects_tab)
 	var library_tab := _button("Library", PANEL_ALT)
+	library_tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	library_tab.pressed.connect(
 		func():
 			tree_mode = "Library"
@@ -721,23 +728,32 @@ func _build_object_sidebar() -> PanelContainer:
 	)
 	brand_tabs.add_child(library_tab)
 	root.add_child(brand_tabs)
+
+	var objects_heading := HBoxContainer.new()
+	objects_heading.add_child(_label("OBJECTS", 10, MUTED, true))
+	var heading_spacer := Control.new()
+	heading_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	objects_heading.add_child(heading_spacer)
+	var filter_button := _button("☰", PANEL_ALT)
+	filter_button.tooltip_text = "Filter by object type"
+	objects_heading.add_child(filter_button)
+	root.add_child(_pad(objects_heading, 10, 10, 5, 0))
 	var search_row := HBoxContainer.new()
 	search_input = _line_edit("Search")
 	search_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	search_input.text_changed.connect(func(_value): _refresh_object_list())
 	search_row.add_child(search_input)
-	var filter_button := _button("☰", PANEL_ALT)
-	filter_button.pressed.connect(
-		func():
-			object_filter_menu.popup(Rect2i(Vector2i(get_global_mouse_position()), Vector2i(1, 1)))
-	)
-	search_row.add_child(filter_button)
-	root.add_child(search_row)
+	root.add_child(_pad(search_row, 10, 10, 2, 6))
 	object_filter_menu = PopupMenu.new()
 	for item in ["All", "Notes", "Lines", "Curves", "Markers"]:
 		object_filter_menu.add_item(item)
 	object_filter_menu.id_pressed.connect(_on_object_filter_selected)
 	add_child(object_filter_menu)
+	filter_button.pressed.connect(
+		func():
+			object_filter_menu.popup(Rect2i(Vector2i(get_global_mouse_position()), Vector2i(1, 1)))
+	)
+
 	object_tree_scroll = ScrollContainer.new()
 	object_tree_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(object_tree_scroll)
@@ -755,7 +771,9 @@ func _build_object_sidebar() -> PanelContainer:
 	tree_context_menu.add_item("Delete", 1)
 	tree_context_menu.id_pressed.connect(_on_tree_context_action)
 	add_child(tree_context_menu)
+
 	var view_panel := VBoxContainer.new()
+	view_panel.add_theme_constant_override("separation", 2)
 	view_panel.add_child(_label("VIEW", 10, MUTED, true))
 	show_grid_check = _new_check("Show Grid", true)
 	show_grid_check.toggled.connect(
@@ -776,10 +794,16 @@ func _build_object_sidebar() -> PanelContainer:
 		func(value):
 			grid.extend_grid_boundary = value
 			grid.refresh()
-			_show_properties()
 	)
 	view_panel.add_child(extend_boundary_check)
-	root.add_child(_pad(view_panel, 8, 8, 4, 8))
+	root.add_child(_pad(view_panel, 10, 8, 8, 7))
+
+	var count_row := HBoxContainer.new()
+	played_count_label = _label("0 / 0", 11, TEXT, true)
+	count_row.add_child(_pad(played_count_label, 12, 4, 8, 8))
+	selected_count_label = _label("Selected: 0", 11, ACCENT, true)
+	count_row.add_child(_pad(selected_count_label, 4, 4, 8, 8))
+	root.add_child(count_row)
 	return panel
 
 
@@ -815,15 +839,13 @@ func _build_center_editor() -> Control:
 	grid_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	grid_area.clip_contents = true
 	body.add_child(grid_area)
-	var center := AspectRatioContainer.new()
-	center.ratio = 1.0
-	center.stretch_mode = AspectRatioContainer.STRETCH_FIT
+	var center := CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	grid_area.add_child(center)
 	grid = GRID_SCRIPT.new()
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	grid.custom_minimum_size = Vector2(360, 360)
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	grid.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	grid.custom_minimum_size = Vector2(340, 340)
 	grid.grid_clicked.connect(_on_grid_clicked)
 	grid.grid_dragged.connect(_on_grid_dragged)
 	grid.grid_hovered.connect(_on_grid_hovered)
@@ -837,17 +859,17 @@ func _build_center_editor() -> Control:
 	center.add_child(grid)
 	grid_navigator = GRID_NAV_SCRIPT.new()
 	grid_navigator.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	grid_navigator.position = Vector2(-12, 12)
+	grid_navigator.position = Vector2(-124, 12)
 	grid_navigator.view_changed.connect(_on_grid_view_changed)
 	grid_area.add_child(grid_navigator)
 	layers_toggle = _button("LAYERS  ‹", PANEL_ALT)
 	layers_toggle.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	layers_toggle.position = Vector2(-8, -12)
+	layers_toggle.position = Vector2(-44, -42)
 	layers_toggle.pressed.connect(_toggle_layers_panel)
 	grid_area.add_child(layers_toggle)
 	layers_panel = _build_layers_panel()
 	layers_panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	layers_panel.position = Vector2(-12, -48)
+	layers_panel.position = Vector2(-312, -192)
 	layers_panel.custom_minimum_size = Vector2(300, 180)
 	layers_panel.visible = true
 	layers_toggle.visible = false
@@ -860,9 +882,12 @@ func _build_inspector() -> PanelContainer:
 	panel.custom_minimum_size.x = 330
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(_label("INSPECTOR", 11, MUTED, true))
 	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	column.add_child(scroll)
 	properties_panel = VBoxContainer.new()
 	properties_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -906,14 +931,8 @@ func _build_layers_panel() -> PanelContainer:
 
 func _build_new_footer() -> Control:
 	var footer := HBoxContainer.new()
-	footer.custom_minimum_size.y = 82
+	footer.custom_minimum_size.y = 72
 	footer.add_theme_constant_override("separation", 10)
-	played_count_label = _label("0 / 0", 12, TEXT, true)
-	footer.add_child(_pad(played_count_label, 16, 4, 4, 4))
-	selected_count_label = _label("Selected: 0", 12, ACCENT, true)
-	footer.add_child(selected_count_label)
-	var spacer1 := VSeparator.new()
-	footer.add_child(spacer1)
 	footer.add_child(_label("Playback Rate", 10, MUTED))
 	playback_rate_spin = SpinBox.new()
 	playback_rate_spin.min_value = 0.5
@@ -936,10 +955,6 @@ func _build_new_footer() -> Control:
 	play_track.pressed.connect(_toggle_play)
 	footer.add_child(_pad(play_track, 12, 16, 6, 6))
 	return footer
-
-
-func _build_new_controls_finish() -> void:
-	pass
 
 
 func _new_spin(minimum: float, maximum: float, value: float, step: float) -> SpinBox:
@@ -1027,13 +1042,6 @@ func _on_bpm_value_changed(value: float) -> void:
 			wave_overlay.bar_seconds = _bar_seconds()
 			wave_overlay.queue_redraw()
 		_record_history()
-
-
-func _update_auto_advance_badge() -> void:
-	if auto_advance_badge is Control:
-		auto_advance_badge.visible = true
-		if auto_advance_badge is Label:
-			(auto_advance_badge as Label).text = "AUTO ON" if auto_advance else "AUTO OFF"
 
 
 func _update_bpm_display() -> void:
@@ -1285,7 +1293,15 @@ func _select_grid_area(from: Vector2, to: Vector2) -> void:
 	var bounds := Rect2(from, to - from).abs()
 	selected_ids.clear()
 	selected_shape_id = ""
+	var approach_window := 2.4 / maxf(approach_rate_value, 0.2)
 	for note in note_list:
+		var layer_name := str(note.get("layer", "Layer 1"))
+		if not bool(grid.visible_layers.get(layer_name, true)):
+			continue
+		if audio_loaded:
+			var arrival := float(note.get("time", 0.0)) - song_time
+			if arrival < 0.0 or arrival > approach_window:
+				continue
 		var position := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
 		if bounds.has_point(position):
 			selected_ids.append(str(note.get("id", "")))
@@ -1296,9 +1312,17 @@ func _select_grid_area(from: Vector2, to: Vector2) -> void:
 func _on_grid_clicked(position: Vector2, control_held: bool = false) -> void:
 	if current_tool == "Select":
 		var nearest := ""
-		var best := 0.07
+		var best := 0.10
+		var approach_window := 2.4 / maxf(approach_rate_value, 0.2)
 		for n in note_list:
-			var d := position.distance_to(Vector2(n.x, n.y))
+			var layer_name := str(n.get("layer", "Layer 1"))
+			if not bool(grid.visible_layers.get(layer_name, true)):
+				continue
+			if audio_loaded:
+				var arrival := float(n.get("time", 0.0)) - song_time
+				if arrival < 0.0 or arrival > approach_window:
+					continue
+			var d := position.distance_to(Vector2(float(n.x), float(n.y)))
 			if d < best:
 				best = d
 				nearest = str(n.id)
@@ -1403,6 +1427,7 @@ func _append_note(
 		"y": clampf(position.y, 0.02, 0.98),
 		"time": at_time,
 		"bar": _time_to_bar(at_time),
+		"name": "Note %02d" % (note_list.size() + 1),
 		"layer": str(layers[current_layer].name),
 		"type": note_type
 	}
@@ -1615,13 +1640,13 @@ func _refresh_object_list() -> void:
 	if show_notes:
 		var notes_by_bar: Dictionary = {}
 		for note in note_list:
-			var bar_number := int(floor(float(note.get("bar", 0.0)))) + 1
+			var bar_number := maxi(int(floor(float(note.get("bar", 1.0)))), 1)
 			if not notes_by_bar.has(bar_number):
 				notes_by_bar[bar_number] = []
 			if (
 				query == ""
 				or ("note %d" % bar_number).contains(query)
-				or str(note.get("type", "Note")).to_lower().contains(query)
+				or str(note.get("name", note.get("type", "Note"))).to_lower().contains(query)
 			):
 				notes_by_bar[bar_number].append(note)
 		var bars: Array = notes_by_bar.keys()
@@ -1647,10 +1672,12 @@ func _refresh_object_list() -> void:
 			for note in notes_by_bar[bar_number]:
 				var note_id := str(note.get("id", ""))
 				var note_time := float(note.get("time", 0.0))
+				var note_number := note_list.find(note) + 1
+				var note_title := str(note.get("name", "Note %02d" % maxi(note_number, 1)))
 				_add_tree_item(
 					note_id,
 					"□",
-					str(note.get("type", "Note")),
+					note_title,
 					note_time,
 					ACCENT,
 					query,
@@ -1797,98 +1824,132 @@ func _show_properties() -> void:
 			_label("Select a note or marker to edit its properties.", 11, MUTED)
 		)
 		return
-	var row := HBoxContainer.new()
-	row.add_child(_label("● Note", 12, ACCENT, true))
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(spacer)
+	var header := HBoxContainer.new()
+	header.add_child(_label("● Note", 12, ACCENT, true))
+	var header_spacer := Control.new()
+	header_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(header_spacer)
 	var duplicate_button := _button("Duplicate", PANEL_ALT)
 	duplicate_button.pressed.connect(_duplicate_selected)
-	row.add_child(duplicate_button)
+	header.add_child(duplicate_button)
 	var delete_button := _button("Delete", PANEL_ALT)
 	delete_button.pressed.connect(_delete_selected)
-	row.add_child(delete_button)
-	properties_panel.add_child(row)
-	var fields := HBoxContainer.new()
-	fields.add_child(
-		_property_spin(
-			"Time (s)",
-			float(selected.time),
-			0,
-			maxf(duration, 999),
-			0.001,
-			func(v):
-				selected.time = v
-				selected.bar = _time_to_bar(v)
-				_record_history()
-				_refresh_object_list()
-		)
+	header.add_child(delete_button)
+	properties_panel.add_child(header)
+
+	var note_index := note_list.find(selected) + 1
+	var name_input := _line_edit("Note name")
+	name_input.text = str(selected.get("name", "Note %02d" % maxi(note_index, 1)))
+	name_input.text_changed.connect(
+		func(value):
+			selected.name = value
+			_record_history()
+			_refresh_object_list()
 	)
-	fields.add_child(
+	properties_panel.add_child(_field("Name", name_input))
+
+	var time_control := _property_spin(
+		"Time (s)",
+		float(selected.time),
+		0.0,
+		maxf(duration, 999.0),
+		0.001,
+		func(value):
+			selected.time = value
+			selected.bar = _time_to_bar(value)
+			_record_history()
+			_refresh_object_list()
+			if grid != null:
+				grid.refresh()
+			if wave_overlay != null:
+				wave_overlay.queue_redraw()
+	)
+	properties_panel.add_child(time_control)
+	properties_panel.add_child(
+		_label("Bar %.3f · %s" % [float(selected.bar), str(selected.layer)], 10, MUTED)
+	)
+
+	var position_row := HBoxContainer.new()
+	position_row.add_theme_constant_override("separation", 8)
+	position_row.add_child(
 		_property_spin(
 			"X",
 			float(selected.x),
-			0,
-			1,
+			0.0,
+			1.0,
 			0.01,
-			func(v):
-				selected.x = v
+			func(value):
+				selected.x = value
 				_record_history()
-				_sync_grid()
+				if grid != null:
+					grid.refresh()
+				if wave_overlay != null:
+					wave_overlay.queue_redraw()
 		)
 	)
-	fields.add_child(
+	position_row.add_child(
 		_property_spin(
 			"Y",
 			float(selected.y),
-			0,
-			1,
+			0.0,
+			1.0,
 			0.01,
-			func(v):
-				selected.y = v
+			func(value):
+				selected.y = value
 				_record_history()
-				_sync_grid()
+				if grid != null:
+					grid.refresh()
+				if wave_overlay != null:
+					wave_overlay.queue_redraw()
 		)
 	)
-	var layeropt := OptionButton.new()
-	for layer in layers:
-		layeropt.add_item(str(layer.name))
-	layeropt.select(current_layer)
-	layeropt.item_selected.connect(
-		func(i):
-			selected.layer = str(layers[i].name)
+	properties_panel.add_child(position_row)
+
+	var layer_option := OptionButton.new()
+	layer_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var selected_layer_index := 0
+	for layer_index in range(layers.size()):
+		layer_option.add_item(str(layers[layer_index].name))
+		if str(layers[layer_index].name) == str(selected.get("layer", "Layer 1")):
+			selected_layer_index = layer_index
+	layer_option.select(selected_layer_index)
+	layer_option.item_selected.connect(
+		func(index):
+			selected.layer = str(layers[index].name)
 			_record_history()
 			_sync_grid()
 	)
-	fields.add_child(_field("Layer", layeropt))
-	properties_panel.add_child(fields)
-	properties_panel.add_child(
-		_label("Bar %.3f · %s" % [float(selected.bar), selected.layer], 10, MUTED)
-	)
-	var transform_row := HBoxContainer.new()
+	properties_panel.add_child(_field("Layer", layer_option))
+
+	var rotate_row := HBoxContainer.new()
 	var angle := SpinBox.new()
-	angle.min_value = -360
-	angle.max_value = 360
-	angle.value = 15
+	angle.min_value = -360.0
+	angle.max_value = 360.0
+	angle.value = 15.0
 	angle.prefix = "Rotate ° "
-	transform_row.add_child(angle)
+	angle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rotate_row.add_child(angle)
 	var rotate_button := _button("Apply", PANEL_ALT)
 	rotate_button.pressed.connect(func(): _transform_selected(angle.value, 1.0, false))
-	transform_row.add_child(rotate_button)
+	rotate_row.add_child(rotate_button)
+	properties_panel.add_child(rotate_row)
+
+	var scale_row := HBoxContainer.new()
 	var scale_input := SpinBox.new()
 	scale_input.min_value = 0.1
 	scale_input.max_value = 4.0
 	scale_input.step = 0.1
 	scale_input.value = 1.1
 	scale_input.prefix = "Scale × "
-	transform_row.add_child(scale_input)
+	scale_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scale_row.add_child(scale_input)
 	var scale_button := _button("Apply", PANEL_ALT)
 	scale_button.pressed.connect(func(): _transform_selected(0.0, scale_input.value, false))
-	transform_row.add_child(scale_button)
-	var reverse_button := _button("Reverse", PANEL_ALT)
+	scale_row.add_child(scale_button)
+	properties_panel.add_child(scale_row)
+	var reverse_button := _button("Reverse time", PANEL_ALT)
 	reverse_button.pressed.connect(func(): _transform_selected(0.0, 1.0, true))
-	transform_row.add_child(reverse_button)
-	properties_panel.add_child(transform_row)
+	properties_panel.add_child(reverse_button)
 
 
 func _build_bookmark_properties(item: Dictionary, kind: String) -> void:

@@ -13,7 +13,7 @@ var moved := false
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	custom_minimum_size = Vector2(92, 76)
+	custom_minimum_size = Vector2(112, 90)
 	queue_redraw()
 
 
