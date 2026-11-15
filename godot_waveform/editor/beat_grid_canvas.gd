@@ -619,7 +619,7 @@ func _draw() -> void:
 		if animate_notes:
 			if arrival < 0.0 or arrival > approach_window:
 				continue
-			opacity = powf(clampf(1.0 - arrival / approach_window, 0.02, 1.0), fade_power)
+			opacity = pow(clampf(1.0 - arrival / approach_window, 0.02, 1.0), fade_power)
 		var target := Vector2(float(note.get("x", 0.5)), float(note.get("y", 0.5)))
 		var p := _project(target)
 		var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
@@ -662,7 +662,7 @@ func _draw() -> void:
 			if animate_notes:
 				if arrival < 0.0 or arrival > approach_window:
 					continue
-				opacity = powf(clampf(1.0 - arrival / approach_window, 0.02, 1.0), fade_power)
+				opacity = pow(clampf(1.0 - arrival / approach_window, 0.02, 1.0), fade_power)
 			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
 			var radius := (39.0 if not is_3d_preview else 34.0) * growth * note_size_scale
 			var center := _project(sample_position)
@@ -690,7 +690,7 @@ func _draw() -> void:
 			var arrival := amount * line_preview_duration
 			var opacity := 1.0
 			if animate_notes:
-				opacity = powf(clampf(1.0 - arrival / approach_window, 0.02, 1.0), fade_power)
+				opacity = pow(clampf(1.0 - arrival / approach_window, 0.02, 1.0), fade_power)
 			var growth := lerpf(0.42, 1.0, opacity) if animate_notes else 1.0
 			var radius := (39.0 if not is_3d_preview else 34.0) * growth * note_size_scale
 			var preview_center := _project(preview_point)

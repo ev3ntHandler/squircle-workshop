@@ -698,7 +698,7 @@ func _show_settings_category(category: String) -> void:
 		child.queue_free()
 	for tab in settings_tabs.get_children():
 		if tab is Button:
-			var is_active := tab.text == category
+			var is_active: bool = tab.text == category
 			tab.add_theme_stylebox_override(
 				"normal",
 				_style(ACCENT if is_active else PANEL_ALT, 7, ACCENT if is_active else BORDER)

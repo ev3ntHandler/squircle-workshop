@@ -77,7 +77,7 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 		elif event is InputEventMouseMotion and fit_panning:
 			var visible_span := 1.0 / maxf(waveform.zoom, 1.0)
-			var pan_delta := (event.position.x - fit_pan_last_x) / maxf(size.x, 1.0)
+			var pan_delta: float = (event.position.x - fit_pan_last_x) / maxf(size.x, 1.0)
 			waveform.scroll_by(-pan_delta * visible_span)
 			fit_pan_last_x = event.position.x
 			accept_event()
@@ -407,8 +407,8 @@ func _draw() -> void:
 			var active_y := clampi(int(floor(note_y * 3.0)), 0, 2)
 			var grid_x := float(maxi(spatial_snap_x, 1))
 			var grid_y := float(maxi(spatial_snap_y, 1))
-			var snapped_note_x := (round(note_x * grid_x - 0.5) + 0.5) / grid_x
-			var snapped_note_y := (round(note_y * grid_y - 0.5) + 0.5) / grid_y
+			var snapped_note_x: float = (round(note_x * grid_x - 0.5) + 0.5) / grid_x
+			var snapped_note_y: float = (round(note_y * grid_y - 0.5) + 0.5) / grid_y
 			var is_quantized := (
 				absf(note_x - snapped_note_x) < 0.002 and absf(note_y - snapped_note_y) < 0.002
 			)
