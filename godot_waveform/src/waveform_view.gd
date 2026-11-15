@@ -38,6 +38,8 @@ signal view_changed(start_ratio: float, zoom: float)
 ## Emitted after the internal texture was rebuilt (e.g. after a resize or zoom).
 signal texture_rebuilt
 
+const RESIZE_GRIP := 10.0
+
 @export_group("Look")
 ## Top color of the waveform bars.
 @export var wave_color_top: Color = Color(0.42, 0.78, 1.0)
@@ -55,6 +57,8 @@ signal texture_rebuilt
 @export var padding: int = 6
 ## Space between bars in pixels (0 draws a solid block).
 @export var bar_gap: int = 0
+## Minimum rendered waveform thickness, preserving thin peaks at low zoom.
+@export_range(1, 8, 1) var min_bar_height: int = 2
 ## Which channel(s) to draw.
 @export_enum("mix", "stereo", "left", "right") var channel_mode: String = "mix":
 	set(value):
@@ -196,14 +200,11 @@ var _batching := false
 # While true the window change is only a horizontal slide of the existing texture.
 var _sliding := false
 # Geometry of the texture currently on the GPU (see _rebuild / _update_scroll_shift).
-var _render_start := 0.0        # track ratio at the left edge of the texture
-var _render_span := 1.0         # track ratio the texture covers (view + overscan)
-var _render_visible := 1.0      # track ratio the control itself covers
+var _render_start := 0.0  # track ratio at the left edge of the texture
+var _render_span := 1.0  # track ratio the texture covers (view + overscan)
+var _render_visible := 1.0  # track ratio the control itself covers
 var _render_view_size := Vector2.ZERO  # control size the texture was baked for
-var _shift_px := 0              # whole-pixel slide of the texture to the left
-
-## Height of the drag area at the bottom edge that resizes the control.
-const RESIZE_GRIP := 10.0
+var _shift_px := 0  # whole-pixel slide of the texture to the left
 
 
 func _ready() -> void:
@@ -255,8 +256,15 @@ func _draw() -> void:
 		draw_rect(Rect2(Vector2.ZERO, size), background)
 		var font := ThemeDB.fallback_font
 		if font != null:
-			draw_string(font, Vector2(12, size.y * 0.5 + 5), "No waveform data",
-					HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.35))
+			draw_string(
+				font,
+				Vector2(12, size.y * 0.5 + 5),
+				"No waveform data",
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1,
+				14,
+				Color(1, 1, 1, 0.35)
+			)
 
 	var visible := _visible_fraction()
 	var view_range := get_view_range()
@@ -296,8 +304,9 @@ func _draw_pulse(play_x: float) -> void:
 		return
 	var opacity := clampf(pulse * pulse_max_opacity, 0.0, 1.0)
 	var left := play_x - pulse_width if pulse_flip else play_x
-	draw_texture_rect(texture, Rect2(left, 0.0, pulse_width, size.y), false,
-			Color(1.0, 1.0, 1.0, opacity))
+	draw_texture_rect(
+		texture, Rect2(left, 0.0, pulse_width, size.y), false, Color(1.0, 1.0, 1.0, opacity)
+	)
 
 
 func _build_pulse_textures() -> void:
@@ -315,6 +324,7 @@ func _build_pulse_textures() -> void:
 
 
 # --- input ----------------------------------------------------------------
+
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -367,8 +377,9 @@ func _gui_input(event: InputEvent) -> void:
 			_seek_to(motion.position.x)
 		else:
 			_hover_ratio = _ratio_at(motion.position.x)
-			mouse_default_cursor_shape = Control.CURSOR_VSIZE if _is_on_grip(motion.position) \
-					else Control.CURSOR_ARROW
+			mouse_default_cursor_shape = (
+				Control.CURSOR_VSIZE if _is_on_grip(motion.position) else Control.CURSOR_ARROW
+			)
 			queue_redraw()
 
 
@@ -384,6 +395,7 @@ func _notification(what: int) -> void:
 
 
 # --- public API -----------------------------------------------------------
+
 
 ## Forces the texture to be rebuilt on the next frame.
 func queue_rebuild() -> void:
@@ -528,6 +540,7 @@ func get_render_options() -> Dictionary:
 		"supersample": clampi(render_supersample, 1, 4),
 		"padding": padding,
 		"bar_gap": bar_gap,
+		"min_bar_height": min_bar_height,
 		"background": background,
 		"background_bottom": background_bottom,
 		"wave_color_top": wave_color_top,
@@ -543,6 +556,7 @@ func get_render_options() -> Dictionary:
 
 
 # --- internals ------------------------------------------------------------
+
 
 func _set_pyramid(value: WaveformPyramid) -> void:
 	pyramid = value
@@ -572,7 +586,7 @@ func _set_zoom(value: float) -> void:
 	zoom = clamped
 	var limit := maxf(1.0 - _visible_fraction(), 0.0)
 	if view_start > limit:
-		view_start = limit          # the setter clamps and re-renders
+		view_start = limit  # the setter clamps and re-renders
 	else:
 		_commit_view_change()
 
@@ -607,8 +621,7 @@ func _follow_playhead() -> void:
 	if visible >= 0.999:
 		return
 	if follow_style == "center":
-		var target := clampf(playback_ratio - visible * 0.5, 0.0,
-				maxf(1.0 - visible, 0.0))
+		var target := clampf(playback_ratio - visible * 0.5, 0.0, maxf(1.0 - visible, 0.0))
 		# The texture is only blitted at whole pixel offsets, so a sub-pixel move
 		# would not change a single pixel: skip it instead of re-rendering.
 		var pixel := visible / maxf(size.x, 1.0)
@@ -620,7 +633,7 @@ func _follow_playhead() -> void:
 		if target < view_start and view_start - target < pixel * 2.0:
 			return
 		_sliding = true
-		view_start = target          # silent: slides the texture, no rebuild
+		view_start = target  # silent: slides the texture, no rebuild
 		_sliding = false
 		return
 	var lead := clampf(follow_lead, 0.0, 0.5)
@@ -674,8 +687,13 @@ func _arm_follow_preview() -> void:
 
 ## True when the next bake should include overscan for centered scrolling.
 func _overscan_active() -> bool:
-	return follow_playhead and follow_style == "center" and follow_overscan > 0.01 \
-			and _visible_fraction() < 0.999 and playback_ratio >= 0.0
+	return (
+		follow_playhead
+		and follow_style == "center"
+		and follow_overscan > 0.01
+		and _visible_fraction() < 0.999
+		and playback_ratio >= 0.0
+	)
 
 
 ## Snaps [param start] down to a whole envelope slot. Re-baked strips then start on
@@ -788,8 +806,9 @@ func _rebuild() -> void:
 	if _overscan_active():
 		# bake a strip wider than the view so centered follow can scroll by blitting
 		start = _snap_to_slot(level, start)
-		span = minf((view_range.y - view_range.x) * (1.0 + clampf(follow_overscan, 0.1, 2.0)),
-				1.0 - start)
+		span = minf(
+			(view_range.y - view_range.x) * (1.0 + clampf(follow_overscan, 0.1, 2.0)), 1.0 - start
+		)
 		span = maxf(span, minf(visible, 1.0 - start))
 	var options := get_render_options()
 	options["view_start"] = start
@@ -819,8 +838,11 @@ func _rebuild() -> void:
 	_shift_px = 0
 	if image.is_empty():
 		_texture = null
-	elif _texture != null and _texture.get_width() == image.get_width() \
-			and _texture.get_height() == image.get_height():
+	elif (
+		_texture != null
+		and _texture.get_width() == image.get_width()
+		and _texture.get_height() == image.get_height()
+	):
 		# same size as last frame: reuse the GPU texture instead of re-creating it
 		_texture.update(image)
 	else:

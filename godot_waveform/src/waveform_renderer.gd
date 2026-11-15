@@ -26,6 +26,7 @@ extends RefCounted
 ## })
 ## [/codeblock]
 
+
 ## Returns a fresh dictionary with every supported option and its default value.
 ##
 ## [codeblock]
@@ -210,7 +211,9 @@ static func render(data: WaveformData, options: Dictionary = {}) -> Image:
 			var t := float(row) / float(maxi(lane.size.y - 1, 1))
 			var base := top_color.lerp(bottom_color, t)
 			row_normal[row] = base
-			row_core[row] = base.lerp(Color(core_color.r, core_color.g, core_color.b, 1.0), core_color.a)
+			row_core[row] = base.lerp(
+				Color(core_color.r, core_color.g, core_color.b, 1.0), core_color.a
+			)
 
 		# Dim centre line, drawn first so the bars cover it. Image.fill_rect()
 		# overwrites pixels (alpha included), so the line is pre-blended with the
@@ -220,7 +223,8 @@ static func render(data: WaveformData, options: Dictionary = {}) -> Image:
 			var line_t := float(line_row) / float(maxi(height - 1, 1))
 			var row_background := background_top.lerp(background_bottom, line_t)
 			var line_color := row_background.lerp(
-					Color(center_line.r, center_line.g, center_line.b), center_line.a)
+				Color(center_line.r, center_line.g, center_line.b), center_line.a
+			)
 			image.fill_rect(Rect2i(0, line_row, width, supersample), line_color)
 
 		# ---- pass 1: per-column geometry --------------------------------
@@ -269,8 +273,12 @@ static func render(data: WaveformData, options: Dictionary = {}) -> Image:
 			if draw_rms:
 				var rms := clampf(cols.rms_values[column] * gain, 0.0, 1.0)
 				if rms > 0.0:
-					var core_top := clampi(int(round(lane_center - rms * half_height)), y_top, y_bottom)
-					var core_bottom := clampi(int(round(lane_center + rms * half_height)), y_top, y_bottom)
+					var core_top := clampi(
+						int(round(lane_center - rms * half_height)), y_top, y_bottom
+					)
+					var core_bottom := clampi(
+						int(round(lane_center + rms * half_height)), y_top, y_bottom
+					)
 					if core_bottom >= core_top:
 						ct[column] = core_top
 						cb[column] = core_bottom
@@ -281,11 +289,22 @@ static func render(data: WaveformData, options: Dictionary = {}) -> Image:
 			var main_color: Color = row_normal[0]
 			var core_flat: Color = row_core[0]
 			for column in columns:
-				image.fill_rect(Rect2i(xs[column], yt[column],
-						xe[column] - xs[column], yb[column] - yt[column] + 1), main_color)
+				image.fill_rect(
+					Rect2i(
+						xs[column], yt[column], xe[column] - xs[column], yb[column] - yt[column] + 1
+					),
+					main_color
+				)
 				if cb[column] >= ct[column]:
-					image.fill_rect(Rect2i(xs[column], ct[column],
-							xe[column] - xs[column], cb[column] - ct[column] + 1), core_flat)
+					image.fill_rect(
+						Rect2i(
+							xs[column],
+							ct[column],
+							xe[column] - xs[column],
+							cb[column] - ct[column] + 1
+						),
+						core_flat
+					)
 		else:
 			# Vertical gradient: scan rows and merge touching columns into runs, so
 			# the number of fill_rect() calls stays close to the image height
@@ -338,7 +357,15 @@ static func bake_and_save(audio_path: String, png_path: String, options: Diction
 ## Fills every [param tops]..[param bots] span row by row, merging horizontally
 ## touching columns into single rects. [param row_colors] holds one colour per row
 ## of [param lane], which is what produces the vertical gradient.
-static func _draw_span_rows(image: Image, lane: Rect2i, xs: PackedInt32Array, xe: PackedInt32Array, tops: PackedInt32Array, bots: PackedInt32Array, row_colors: PackedColorArray) -> void:
+static func _draw_span_rows(
+	image: Image,
+	lane: Rect2i,
+	xs: PackedInt32Array,
+	xe: PackedInt32Array,
+	tops: PackedInt32Array,
+	bots: PackedInt32Array,
+	row_colors: PackedColorArray
+) -> void:
 	var lane_top := lane.position.y
 	var lane_rows := lane.size.y
 	var columns := tops.size()
