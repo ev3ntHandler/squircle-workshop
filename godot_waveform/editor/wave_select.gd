@@ -27,8 +27,6 @@ var bar_seconds := 1.0
 var bpm_points: Array[Vector2] = [Vector2(0.0, 128.0), Vector2(1.0, 128.0)]
 var fit_only := false
 var fit_dragging := false
-var fit_panning := false
-var fit_pan_last_x := 0.0
 var divisions_per_bar := 8
 var snap_seek_to_bar := true
 var snap_pan_to_bar := true
@@ -50,36 +48,14 @@ func _gui_input(event: InputEvent) -> void:
 	if fit_only:
 		if event is InputEventMouseButton:
 			if event.button_index == MOUSE_BUTTON_LEFT:
-				fit_dragging = event.pressed and not event.shift_pressed
-				fit_panning = event.pressed and event.shift_pressed
-				fit_pan_last_x = event.position.x
-				if event.pressed and not event.shift_pressed:
+				fit_dragging = event.pressed
+				if event.pressed:
 					_seek_minimap_position(event.position.x)
-			elif event.button_index in [MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT]:
-				fit_panning = event.pressed
-				fit_pan_last_x = event.position.x
-			elif (
-				event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]
-				and event.pressed
-			):
-				if event.shift_pressed:
-					var pan_amount := 0.2 / maxf(waveform.zoom, 1.0)
-					waveform.scroll_by(
-						-pan_amount if event.button_index == MOUSE_BUTTON_WHEEL_UP else pan_amount
-					)
-				elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
-					waveform.zoom_at(waveform.zoom_step, event.position.x / maxf(size.x, 1.0))
-				else:
-					waveform.zoom_at(1.0 / waveform.zoom_step, event.position.x / maxf(size.x, 1.0))
+			else:
+				fit_dragging = false
 			accept_event()
 		elif event is InputEventMouseMotion and fit_dragging:
 			_seek_minimap_position(event.position.x)
-			accept_event()
-		elif event is InputEventMouseMotion and fit_panning:
-			var visible_span := 1.0 / maxf(waveform.zoom, 1.0)
-			var pan_delta: float = (event.position.x - fit_pan_last_x) / maxf(size.x, 1.0)
-			waveform.scroll_by(-pan_delta * visible_span)
-			fit_pan_last_x = event.position.x
 			accept_event()
 		return
 	if event is InputEventMouseButton:
@@ -158,9 +134,8 @@ func _gui_input(event: InputEvent) -> void:
 
 func _seek_minimap_position(x: float) -> void:
 	if waveform != null:
-		var visible_span := 1.0 / maxf(waveform.zoom, 1.0)
-		var ratio := waveform.view_start + clampf(x / maxf(size.x, 1.0), 0.0, 1.0) * visible_span
-		waveform.seek_requested.emit(clampf(ratio, 0.0, 1.0))
+		var ratio := clampf(x / maxf(size.x, 1.0), 0.0, 1.0)
+		waveform.seek_requested.emit(ratio)
 
 
 func _note_at_x(x: float) -> String:

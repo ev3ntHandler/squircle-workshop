@@ -805,9 +805,7 @@ func _show_settings_category(category: String) -> void:
 					_sync_grid()
 			)
 		"Waveform":
-			_settings_section_label(
-				"Display quality", "Independent overview zoom and main waveform rendering controls"
-			)
+			_settings_section_label("Display quality", "Main waveform zoom and rendering controls")
 			_settings_slider(
 				"Main waveform zoom step",
 				1.1,
@@ -815,14 +813,6 @@ func _show_settings_category(category: String) -> void:
 				0.05,
 				waveform.zoom_step,
 				func(value): waveform.zoom_step = value
-			)
-			_settings_slider(
-				"Minimap zoom step",
-				1.25,
-				4.0,
-				0.05,
-				minimap.zoom_step,
-				func(value): minimap.zoom_step = value
 			)
 			_settings_slider(
 				"Waveform height",
@@ -1315,7 +1305,9 @@ func _build_new_waveforms() -> Control:
 	minimap.wave_color_bottom = WAVE_COLOR
 	minimap.rms_color = WAVE_COLOR
 	minimap.smoothing = 2
-	minimap.zoom_step = 1.8
+	minimap.max_zoom = 1.0
+	minimap.zoom = 1.0
+	minimap.view_start = 0.0
 	minimap.follow_playhead = false
 	mini_overlay = SELECT_SCRIPT.new()
 	mini_overlay.waveform = minimap
@@ -1371,6 +1363,8 @@ func _build_new_waveforms() -> Control:
 			wave_overlay.queue_redraw()
 			mini_overlay.queue_redraw()
 			waveform_ruler.queue_redraw()
+			if bpm_graph != null:
+				bpm_graph.queue_redraw()
 	)
 	mini_overlay.viewport_waveform = waveform
 	minimap.view_changed.connect(func(_start, _zoom): mini_overlay.queue_redraw())
@@ -1959,6 +1953,10 @@ func _load_audio(path: String) -> void:
 	player.stream = stream
 	duration = stream.get_length()
 	song_start_offset = 0.0
+	if waveform_ruler != null:
+		waveform_ruler.duration = maxf(duration, 0.01)
+	if minimap != null:
+		minimap.reset_view()
 	if bpm_graph != null:
 		bpm_graph.start_offset_ratio = 0.0
 		bpm_graph.queue_redraw()
@@ -1967,6 +1965,7 @@ func _load_audio(path: String) -> void:
 		status_label.text = (
 			"%s · %.2fs · waveform %s" % [path.get_file(), duration, loader.last_source]
 		)
+	_sync_grid()
 
 
 func _toggle_play() -> void:
